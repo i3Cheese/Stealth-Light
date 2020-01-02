@@ -102,7 +102,6 @@ class Player(pg.sprite.Sprite):
         self.cur_frame = 0
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
-        self.real_pos = [self.rect.x, self.rect.y]  # для вещественных координат
         self.speed = 4
 
     def update(self):
@@ -123,10 +122,13 @@ class Player(pg.sprite.Sprite):
             dy = dy / (2 ** .5)
 
         # изменяем координаты
-        self.real_pos[0] += dx
-        self.real_pos[1] += dy
-        self.rect.x = ceil(self.real_pos[0])
-        self.rect.y = ceil(self.real_pos[1])
+        dx, dy = ceil(dx), ceil(dy)
+        self.rect.x += dx
+        while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+            self.rect.x -= dx//abs(dx)
+        self.rect.y += dy
+        while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+            self.rect.y -= dy//abs(dy)
 
         # изменяем кадр
         self.cur_frame += self.update_speed
