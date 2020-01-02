@@ -1,18 +1,19 @@
 import os
 import sys
-from math import ceil
+from math import ceil, sqrt
 import pygame as pg
 
 # инициализация pygame
 FPS = 60
 pg.init()
-size = WIDTH, HEIGHT = 512, 512
+size = WIDTH, HEIGHT = 1024, 1024
 screen = pg.display.set_mode(size)
 clock = pg.time.Clock()
 running = True
 
 
 # IMAGE TOOLS
+
 
 def load_image(name, colorkey=None):
     fullname = os.path.join('data', name)
@@ -40,7 +41,12 @@ def cut_sheet(sheet, columns, rows):
     return rect, frames
 
 
+def find_center(s: pg.sprite.Sprite):
+    return s.rect.x + s.rect.w // 2, s.rect.y + s.rect.h // 2
+
+
 # WINDOW TOOLS
+
 
 def terminate():
     pg.quit()
@@ -78,7 +84,41 @@ def start_screen():
 
 # CLASSES
 
-class Tile(pg.sprite.Sprite):
+
+class LightedSprite(pg.sprite.Sprite):
+    def __init__(self, *groups):
+        super().__init__(*groups)
+        self.real_image = None
+        self._image = None
+        self._light = 0
+
+    @property
+    def image(self):
+        return self._image
+
+    @image.setter
+    def image(self, value: pg.Surface):
+        self.real_image = value
+        self.put_light()
+
+    @property
+    def light(self):
+        return self._light
+
+    @light.setter
+    def light(self, value):
+        self._light = min(value, 255)
+        self.put_light()
+
+    def put_light(self):
+        self._image = self.real_image.copy()
+        r = self._image.get_rect()
+        dark = self._image.copy()
+        dark.fill((0, 0, 0, 255 - self.light))
+        self._image.blit(dark, (0, 0))
+
+
+class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
 
     def __init__(self, image_type, is_collide, pos_x, pos_y, level):
@@ -88,14 +128,15 @@ class Tile(pg.sprite.Sprite):
             super().__init__(level.tiles_group, level.all_sprites)
         self.level = level
         self.image = Tile.tile_images[image_type]
+        self.light = 50
         self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
 
 
-class Player(pg.sprite.Sprite):
+class Player(LightedSprite):
     default_rect, frames = cut_sheet(load_image('player.png'), 1, 1)
 
     def __init__(self, pos_x, pos_y, level):
-        super().__init__(level.all_sprites, level.player_group)
+        super().__init__(level.all_sprites, level.player_group, level.light_sources)
         self.level = level
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
@@ -103,6 +144,7 @@ class Player(pg.sprite.Sprite):
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
         self.speed = 4
+        self.light_power = 256
 
     def update(self):
         dx = 0
@@ -116,8 +158,7 @@ class Player(pg.sprite.Sprite):
         if pg.key.get_pressed()[pg.K_RIGHT]:
             dx += self.speed
 
-        if dx and dy:
-            # Выравниваем скорость
+        if dx and dy:  # Выравниваем скорость
             dx = dx / (2 ** .5)
             dy = dy / (2 ** .5)
 
@@ -125,10 +166,14 @@ class Player(pg.sprite.Sprite):
         dx, dy = ceil(dx), ceil(dy)
         self.rect.x += dx
         while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-            self.rect.x -= dx//abs(dx)
+            if dx == 0:
+                break
+            self.rect.x -= dx // abs(dx)  # выталкивает персонажа из стен
         self.rect.y += dy
         while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-            self.rect.y -= dy//abs(dy)
+            if dy == 0:
+                break
+            self.rect.y -= dy // abs(dy)  # выталкивает персонажа из стен
 
         # изменяем кадр
         self.cur_frame += self.update_speed
@@ -146,6 +191,7 @@ class Level(pg.Surface):
         self.tiles_group = pg.sprite.Group()
         self.player_group = pg.sprite.Group()
         self.enemies_group = pg.sprite.Group()
+        self.light_sources = pg.sprite.Group()
 
         self.level_map = self.load_level(level_num)
         self.player, self.cols, self.rows = None, None, None
@@ -184,6 +230,7 @@ class Level(pg.Surface):
 
     def update(self, *args):
         self.all_sprites.update(*args)
+        self.make_light()
 
     def draw_on(self, screen: pg.Surface, rect: pg.Rect):
         """Рисует все свои спрайты на себе, затем блитает на screen часть себя.
@@ -201,6 +248,29 @@ class Level(pg.Surface):
         y = min(self.height - rect.height, max(0, target.y + target.height // 2 - rect.height // 2))
 
         screen.blit(self, rect, rect.copy().move(x, y))
+
+    def make_light(self):
+        for sprite in self.all_sprites:
+            sprite.light = 0
+
+        ray_step = 64
+        light_step = 5
+        for source in self.light_sources:
+            so_c = find_center(source)
+            for sprite in self.all_sprites:
+                sp_c = find_center(sprite)
+                r = sqrt((so_c[0] - sp_c[0]) ** 2 + (so_c[1] - sp_c[1]) ** 2)
+                dl = max(0, source.light_power - (r // ray_step) * (
+                        source.light_power // light_step))
+                if dl == 0:
+                    continue
+                if self.ray_tracing(source, sprite):
+                    sprite.light += dl
+
+    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite):
+        """Проверяет доходит ли луч от shooter до target."""
+        # TODO: написать ray_tracing
+        return True
 
 
 level = Level(1)
