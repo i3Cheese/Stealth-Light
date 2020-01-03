@@ -42,7 +42,7 @@ def cut_sheet(sheet, columns, rows):
 
 
 def find_center(s: pg.sprite.Sprite):
-    return s.rect.x + s.rect.w // 2, s.rect.y + s.rect.h // 2
+    return s.rect.center
 
 
 # WINDOW TOOLS
@@ -126,6 +126,7 @@ class Tile(LightedSprite):
             super().__init__(level.tiles_group, level.all_sprites, level.collided_sprites)
         else:
             super().__init__(level.tiles_group, level.all_sprites)
+        self.is_collide = is_collide
         self.level = level
         self.image = Tile.tile_images[image_type]
         self.light = 50
@@ -144,7 +145,15 @@ class Player(LightedSprite):
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
         self.speed = 4
-        self.light_power = 256
+
+        self.light_power = 255
+
+    @property
+    def light_points(self):
+        return [self.rect.topleft,
+                self.rect.topright,
+                self.rect.bottomleft,
+                self.rect.bottomright]
 
     def update(self):
         dx = 0
@@ -195,6 +204,7 @@ class Level(pg.Surface):
 
         self.level_map = self.load_level(level_num)
         self.player, self.cols, self.rows = None, None, None
+        self.tiles = []
         self.generate_level()
 
         self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
@@ -215,18 +225,23 @@ class Level(pg.Surface):
 
     def generate_level(self):
         level = self.level_map
+        self.tiles.clear()
         self.cols = 0
         self.rows = len(level)
         for y in range(len(level)):
+            self.tiles.append([])
             self.cols = max(self.cols, len(level[y]))
             for x in range(len(level[y])):
+                tile = None
                 if level[y][x] == '.':
-                    Tile('empty', False, x, y, self)
+                    tile = Tile('empty', False, x, y, self)
                 elif level[y][x] == '#':
-                    Tile('wall', True, x, y, self)
+                    tile = Tile('wall', True, x, y, self)
                 elif level[y][x] == '@':
-                    Tile('empty', False, x, y, self)
+                    tile = Tile('empty', False, x, y, self)
                     self.player = Player(x, y, self)
+
+                self.tiles[-1].append(tile)
 
     def update(self, *args):
         self.all_sprites.update(*args)
@@ -244,8 +259,8 @@ class Level(pg.Surface):
 
         # вычисляем координаты прямоугольника, который будем рисовать
         target = self.player.rect  # фокус на игроке
-        x = min(self.width - rect.width, max(0, target.x + target.width // 2 - rect.width // 2))
-        y = min(self.height - rect.height, max(0, target.y + target.height // 2 - rect.height // 2))
+        x = max(0, min(self.width - rect.width, target.x + target.width // 2 - rect.width // 2))
+        y = max(0, min(self.height - rect.height, target.y + target.height // 2 - rect.height // 2))
 
         screen.blit(self, rect, rect.copy().move(x, y))
 
@@ -264,13 +279,52 @@ class Level(pg.Surface):
                         source.light_power // light_step))
                 if dl == 0:
                     continue
-                if self.ray_tracing(source, sprite):
-                    sprite.light += dl
+                for point in source.light_points:
+                    if self.ray_tracing(source, sprite, point, sp_c):
+                        sprite.light += dl
+                        break
 
-    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite):
+    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite, a=None, b=None):
         """Проверяет доходит ли луч от shooter до target."""
-        # TODO: написать ray_tracing
-        return True
+        if a is None:
+            a = find_center(shooter)
+        if b is None:
+            b = find_center(target)
+
+        dx = b[0] - a[0]
+        dy = b[1] - a[1]
+        r = sqrt(dx ** 2 + dy ** 2)
+        if r == 0:
+            return True
+        dx = dx / r
+        dy = dy / r
+        now_cord = list(a)
+        for _ in range(int(r) + 1):
+            now_cord[0] += dx
+            now_cord[1] += dy
+            if now_cord[0] == b[0] and now_cord[1] == b[1]:
+                return True
+            if target.rect.collidepoint(*now_cord):
+                return True
+
+            tile = self.cords_to_tile(now_cord)
+            if tile is None:
+                continue
+            if tile is target:
+                return True
+            if tile is shooter:
+                continue
+            if tile.is_collide:
+                return False
+        return False
+
+    def cords_to_tile(self, cords):
+        x = int(cords[0] // self.tile_width)
+        y = int(cords[1] // self.tile_height)
+        if (0 <= y < len(self.tiles)) and (0 <= x < len(self.tiles[y])):
+            return self.tiles[y][x]
+        else:
+            return None
 
 
 level = Level(1)
