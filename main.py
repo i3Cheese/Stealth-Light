@@ -296,8 +296,8 @@ class Level(pg.Surface):
         r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
             return True
-        dx = dx / r
-        dy = dy / r
+        dx = dx / r * 8
+        dy = dy / r * 8
         now_cord = list(a)
         for _ in range(int(r) + 1):
             now_cord[0] += dx
