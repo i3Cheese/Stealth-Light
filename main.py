@@ -117,6 +117,13 @@ class LightedSprite(pg.sprite.Sprite):
         dark.fill((0, 0, 0, 255 - self.light))
         self._image.blit(dark, (0, 0))
 
+    @property
+    def tracking_points(self):
+        return [self.rect.topleft,
+                self.rect.topright,
+                self.rect.bottomleft,
+                self.rect.bottomright]
+
 
 class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
@@ -144,16 +151,9 @@ class Player(LightedSprite):
         self.cur_frame = 0
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
-        self.speed = 4
+        self.speed = 8
 
         self.light_power = 255
-
-    @property
-    def light_points(self):
-        return [self.rect.topleft,
-                self.rect.topright,
-                self.rect.bottomleft,
-                self.rect.bottomright]
 
     def update(self):
         dx = 0
@@ -279,8 +279,8 @@ class Level(pg.Surface):
                         source.light_power // light_step))
                 if dl == 0:
                     continue
-                for point in source.light_points:
-                    if self.ray_tracing(source, sprite, point, sp_c):
+                for point in sprite.tracking_points:
+                    if self.ray_tracing(source, sprite, so_c, point):
                         sprite.light += dl
                         break
 
