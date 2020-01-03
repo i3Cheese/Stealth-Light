@@ -151,7 +151,7 @@ class Player(LightedSprite):
         self.cur_frame = 0
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
-        self.speed = 8
+        self.speed = 6
 
         self.light_power = 255
 
@@ -296,10 +296,11 @@ class Level(pg.Surface):
         r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
             return True
-        dx = dx / r * 8
-        dy = dy / r * 8
+        m = 16
+        dx = dx / r * m
+        dy = dy / r * m
         now_cord = list(a)
-        for _ in range(int(r) + 1):
+        for _ in range(int(r / m) + 1):
             now_cord[0] += dx
             now_cord[1] += dy
             if now_cord[0] == b[0] and now_cord[1] == b[1]:
@@ -342,3 +343,4 @@ while running:
     pg.display.flip()
 
     clock.tick(FPS)
+    print(clock.get_fps())
