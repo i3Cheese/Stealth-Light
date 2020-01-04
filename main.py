@@ -139,12 +139,13 @@ class Tile(LightedSprite):
         self.level = level
         self.image = Tile.tile_images[image_type]
         self.light = 0
-        self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
+        self.rect = pg.Rect(level.tile_width * pos_x, level.tile_height * pos_y,
+                            level.tile_width, level.tile_height,)
 
 
 class Player(LightedSprite):
-    default_rect, frames = cut_sheet(load_image('player.png'), 1, 1)
-    update_light_speed = 5
+    default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
+    update_light_speed = 10
 
     def __init__(self, pos_x, pos_y, level):
         super().__init__(level.all_sprites, level.player_group)
@@ -152,9 +153,10 @@ class Player(LightedSprite):
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
         self.cur_frame = 0
-        self.update_speed = 1 / 10
-        self.image = Player.frames[int(self.cur_frame)]
-        self.speed = 4
+        self.update_image_speed = 10
+        self.image = Player.frames[self.cur_frame]
+        self.real_pos = list(self.rect.topleft)
+        self.speed = 1
 
         self.light_power = 255
         self.count_move_frames = 0
@@ -179,17 +181,20 @@ class Player(LightedSprite):
 
         # изменяем координаты
         if dx or dy:
-            dx, dy = ceil(dx), ceil(dy)
-            self.rect.x += dx
-            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                if dx == 0:
-                    break
-                self.rect.x -= dx // abs(dx)  # выталкивает персонажа из стен
-            self.rect.y += dy
-            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                if dy == 0:
-                    break
-                self.rect.y -= dy // abs(dy)  # выталкивает персонажа из стен
+            if dx:
+                self.real_pos[0] += dx
+                self.rect.x = ceil(self.real_pos[0])
+                ox = int(dx//abs(dx))
+                while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                    self.real_pos[0] -= ox
+                    self.rect.x -= ox  # выталкивает персонажа из стен
+            if dy:
+                self.real_pos[1] += dy
+                self.rect.y = ceil(self.real_pos[1])
+                oy = int(dy//abs(dy))
+                while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                    self.real_pos[1] -= oy
+                    self.rect.y -= oy  # выталкивает персонажа из стен
 
             # Пересчёт света
             self.count_move_frames += 1
@@ -198,12 +203,11 @@ class Player(LightedSprite):
                 self.level.remove_light(self.last_light_pos, self.light_power)
                 self.level.add_light(self.rect.center, self.light_power)
                 self.last_light_pos = self.rect.center
-            self.level.relight_it(self)
+                self.level.relight_it(self)
 
         # изменяем кадр
-        self.cur_frame += self.update_speed
-        self.cur_frame %= len(Player.frames)
-        self.image = Player.frames[int(self.cur_frame)]
+        self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
+        self.image = self.frames[self.cur_frame // self.update_image_speed]
 
 
 class Level(pg.Surface):
@@ -215,7 +219,7 @@ class Level(pg.Surface):
     tiles: List[List[Tile]]
     light_sources: Set[Tuple[Tuple[int, int], int]]
 
-    tile_width = tile_height = 64
+    tile_width = tile_height = 32
 
     def __init__(self, level_num):
         # группы спрайтов
@@ -288,7 +292,7 @@ class Level(pg.Surface):
         screen.blit(self, rect, rect.copy().move(x, y))
 
     def count_light_between(self, pos, light_power, target: LightedSprite):
-        ray_step = 64
+        ray_step = 32
         light_step = 5
 
         # просто константы для более бытрого счёта
@@ -337,7 +341,7 @@ class Level(pg.Surface):
             r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
             return True
-        m = 8  # Модификатор. Ускоряет просчёт
+        m = 16  # Модификатор. Ускоряет просчёт
         r /= m
         dx = dx / r
         dy = dy / r
@@ -368,7 +372,7 @@ class Level(pg.Surface):
             return None
 
 
-level = Level(2)
+level = Level(1)
 start_screen()
 while running:
     for event in pg.event.get():
