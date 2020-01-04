@@ -1,12 +1,14 @@
 import os
 import sys
 from math import ceil, sqrt
+from typing import Tuple, Set, Any, List
+
 import pygame as pg
 
 # инициализация pygame
 FPS = 60
 pg.init()
-size = WIDTH, HEIGHT = 1024, 1024
+size = WIDTH, HEIGHT = 600, 600
 screen = pg.display.set_mode(size)
 clock = pg.time.Clock()
 running = True
@@ -142,9 +144,10 @@ class Tile(LightedSprite):
 
 class Player(LightedSprite):
     default_rect, frames = cut_sheet(load_image('player.png'), 1, 1)
+    update_light_speed = 5
 
     def __init__(self, pos_x, pos_y, level):
-        super().__init__(level.all_sprites, level.player_group, level.light_sources)
+        super().__init__(level.all_sprites, level.player_group)
         self.level = level
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
@@ -154,9 +157,9 @@ class Player(LightedSprite):
         self.speed = 4
 
         self.light_power = 255
-        self.last_ceil = self.level.cords_to_tile(self.rect.center)
+        self.count_move_frames = 0
         self.last_light_pos = self.rect.center
-        self.level.add_light(self, self.last_light_pos, self.light_power)
+        self.level.add_light(self.last_light_pos, self.light_power)
 
     def update(self):
         dx = 0
@@ -175,24 +178,27 @@ class Player(LightedSprite):
             dy = dy / (2 ** .5)
 
         # изменяем координаты
-        dx, dy = ceil(dx), ceil(dy)
-        self.rect.x += dx
-        while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-            if dx == 0:
-                break
-            self.rect.x -= dx // abs(dx)  # выталкивает персонажа из стен
-        self.rect.y += dy
-        while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-            if dy == 0:
-                break
-            self.rect.y -= dy // abs(dy)  # выталкивает персонажа из стен
+        if dx or dy:
+            dx, dy = ceil(dx), ceil(dy)
+            self.rect.x += dx
+            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                if dx == 0:
+                    break
+                self.rect.x -= dx // abs(dx)  # выталкивает персонажа из стен
+            self.rect.y += dy
+            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                if dy == 0:
+                    break
+                self.rect.y -= dy // abs(dy)  # выталкивает персонажа из стен
 
-        new_ceil = self.level.cords_to_tile(self.rect.center)
-        if new_ceil != self.last_ceil:
-            self.level.add_light(self, self.last_light_pos, -self.light_power)
-            self.level.add_light(self, self.rect.center, self.light_power)
-            self.last_light_pos = self.rect.center
-            self.last_ceil = new_ceil
+            # Пересчёт света
+            self.count_move_frames += 1
+            if self.count_move_frames == self.update_light_speed:
+                self.count_move_frames = 0
+                self.level.remove_light(self.last_light_pos, self.light_power)
+                self.level.add_light(self.rect.center, self.light_power)
+                self.last_light_pos = self.rect.center
+            self.level.relight_it(self)
 
         # изменяем кадр
         self.cur_frame += self.update_speed
@@ -201,6 +207,14 @@ class Player(LightedSprite):
 
 
 class Level(pg.Surface):
+    width: int
+    height: int
+    rows: int
+    cols: int
+    player: Player
+    tiles: List[List[Tile]]
+    light_sources: Set[Tuple[Tuple[int, int], int]]
+
     tile_width = tile_height = 64
 
     def __init__(self, level_num):
@@ -210,12 +224,12 @@ class Level(pg.Surface):
         self.tiles_group = pg.sprite.Group()
         self.player_group = pg.sprite.Group()
         self.enemies_group = pg.sprite.Group()
-        self.light_sources = pg.sprite.Group()
 
-        self.level_map = self.load_level(level_num)
+        self.light_sources = set()
+
         self.player, self.cols, self.rows = None, None, None
         self.tiles = []
-        self.generate_level()
+        self.generate_level(self.load_level(level_num))
 
         self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
         super().__init__((self.width, self.height))
@@ -233,8 +247,7 @@ class Level(pg.Surface):
         # дополняем каждую строку пустыми клетками ('.')
         return list(map(lambda x: x.ljust(max_width, '.'), level_map))
 
-    def generate_level(self):
-        level = self.level_map
+    def generate_level(self, level):
         self.tiles.clear()
         self.cols = 0
         self.rows = len(level)
@@ -274,47 +287,62 @@ class Level(pg.Surface):
 
         screen.blit(self, rect, rect.copy().move(x, y))
 
-    def add_light(self, source, pos, light_power):
+    def count_light_between(self, pos, light_power, target: LightedSprite):
         ray_step = 64
         light_step = 5
 
         # просто константы для более бытрого счёта
         rs_ls = ray_step * light_step
         rs_ls2 = rs_ls ** 2
-        for sprite in self.all_sprites:
-            sp_c = find_center(sprite)
-            r = (pos[0] - sp_c[0]) ** 2 + (pos[1] - sp_c[1]) ** 2
-            if r >= rs_ls2:
-                continue
-            r = sqrt(r)
-            dl = int(light_power * (1 - r/rs_ls))
-            if dl == 0:
-                continue
-            for point in sprite.tracking_points:
-                if self.ray_tracing(source, sprite, pos, point, r):
-                    sprite.light += dl
-                    break
+        sp_c = find_center(target)
+        r = (pos[0] - sp_c[0]) ** 2 + (pos[1] - sp_c[1]) ** 2
+        if r >= rs_ls2:
+            return None
+        r = sqrt(r)
+        dl = int(light_power * (1 - r / rs_ls))
+        for point in target.tracking_points:
+            if self.ray_tracing(target, pos, point, r):
+                target.light += dl
+                break
 
-    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite, a=None, b=None, r=None):
-        """Проверяет доходит ли луч от shooter до target."""
-        if a is None:
-            a = find_center(shooter)
+    def count_light_for_source(self, pos, light_power):
+        for sprite in self.all_sprites:
+            self.count_light_between(pos, light_power, sprite)
+
+    def add_light(self, pos, light_power):
+        self.light_sources.add((pos, light_power))
+        self.count_light_for_source(pos, light_power)
+
+    def remove_light(self, pos, light_power):
+        if (pos, light_power) in self.light_sources:
+            self.light_sources.remove((pos, light_power))
+        else:
+            self.light_sources.add((pos, -light_power))
+
+        self.count_light_for_source(pos, -light_power)
+
+    def relight_it(self, sprite: LightedSprite):
+        sprite.light = 0
+        for pos, light_power in self.light_sources:
+            self.count_light_between(pos, light_power, sprite)
+
+    def ray_tracing(self, target: LightedSprite, a, b=None, r=None):
+        """Проверяет доходит ли луч от a до target."""
         if b is None:
             b = find_center(target)
 
         dx = b[0] - a[0]
         dy = b[1] - a[1]
-        if r == None:
+        if r is None:
             r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
             return True
-        m = 8
-        dx = dx / r * m
-        dy = dy / r * m
+        m = 8  # Модификатор. Ускоряет просчёт
+        r /= m
+        dx = dx / r
+        dy = dy / r
         now_cord = list(a)
-        for _ in range(int(r / m) + 1):
-            now_cord[0] += dx
-            now_cord[1] += dy
+        for _ in range(int(r) + 2):
             if now_cord[0] == b[0] and now_cord[1] == b[1]:
                 return True
             if target.rect.collidepoint(*now_cord):
@@ -325,10 +353,10 @@ class Level(pg.Surface):
                 continue
             if tile is target:
                 return True
-            if tile is shooter:
-                continue
             if tile.is_collide:
                 return False
+            now_cord[0] += dx
+            now_cord[1] += dy
         return False
 
     def cords_to_tile(self, cords):
@@ -340,7 +368,7 @@ class Level(pg.Surface):
             return None
 
 
-level = Level(1)
+level = Level(2)
 start_screen()
 while running:
     for event in pg.event.get():
