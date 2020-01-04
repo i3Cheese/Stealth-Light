@@ -107,14 +107,14 @@ class LightedSprite(pg.sprite.Sprite):
 
     @light.setter
     def light(self, value):
-        self._light = min(value, 255)
+        self._light = value
         self.put_light()
 
     def put_light(self):
         self._image = self.real_image.copy()
         r = self._image.get_rect()
         dark = self._image.copy()
-        dark.fill((0, 0, 0, 255 - self.light))
+        dark.fill((0, 0, 0, max(0, min(255, 255 - self.light))))
         self._image.blit(dark, (0, 0))
 
     @property
@@ -136,7 +136,7 @@ class Tile(LightedSprite):
         self.is_collide = is_collide
         self.level = level
         self.image = Tile.tile_images[image_type]
-        self.light = 50
+        self.light = 0
         self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
 
 
@@ -151,9 +151,12 @@ class Player(LightedSprite):
         self.cur_frame = 0
         self.update_speed = 1 / 10
         self.image = Player.frames[int(self.cur_frame)]
-        self.speed = 6
+        self.speed = 4
 
         self.light_power = 255
+        self.last_ceil = self.level.cords_to_tile(self.rect.center)
+        self.last_light_pos = self.rect.center
+        self.level.add_light(self, self.last_light_pos, self.light_power)
 
     def update(self):
         dx = 0
@@ -183,6 +186,13 @@ class Player(LightedSprite):
             if dy == 0:
                 break
             self.rect.y -= dy // abs(dy)  # выталкивает персонажа из стен
+
+        new_ceil = self.level.cords_to_tile(self.rect.center)
+        if new_ceil != self.last_ceil:
+            self.level.add_light(self, self.last_light_pos, -self.light_power)
+            self.level.add_light(self, self.rect.center, self.light_power)
+            self.last_light_pos = self.rect.center
+            self.last_ceil = new_ceil
 
         # изменяем кадр
         self.cur_frame += self.update_speed
@@ -228,6 +238,7 @@ class Level(pg.Surface):
         self.tiles.clear()
         self.cols = 0
         self.rows = len(level)
+        player_pos = (0, 0)
         for y in range(len(level)):
             self.tiles.append([])
             self.cols = max(self.cols, len(level[y]))
@@ -239,13 +250,12 @@ class Level(pg.Surface):
                     tile = Tile('wall', True, x, y, self)
                 elif level[y][x] == '@':
                     tile = Tile('empty', False, x, y, self)
-                    self.player = Player(x, y, self)
-
+                    player_pos = x, y
                 self.tiles[-1].append(tile)
+        self.player = Player(*player_pos, self)
 
     def update(self, *args):
         self.all_sprites.update(*args)
-        self.make_light()
 
     def draw_on(self, screen: pg.Surface, rect: pg.Rect):
         """Рисует все свои спрайты на себе, затем блитает на screen часть себя.
@@ -264,27 +274,28 @@ class Level(pg.Surface):
 
         screen.blit(self, rect, rect.copy().move(x, y))
 
-    def make_light(self):
-        for sprite in self.all_sprites:
-            sprite.light = 0
-
+    def add_light(self, source, pos, light_power):
         ray_step = 64
         light_step = 5
-        for source in self.light_sources:
-            so_c = find_center(source)
-            for sprite in self.all_sprites:
-                sp_c = find_center(sprite)
-                r = sqrt((so_c[0] - sp_c[0]) ** 2 + (so_c[1] - sp_c[1]) ** 2)
-                dl = max(0, source.light_power - (r // ray_step) * (
-                        source.light_power // light_step))
-                if dl == 0:
-                    continue
-                for point in sprite.tracking_points:
-                    if self.ray_tracing(source, sprite, so_c, point):
-                        sprite.light += dl
-                        break
 
-    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite, a=None, b=None):
+        # просто константы для более бытрого счёта
+        rs_ls = ray_step * light_step
+        rs_ls2 = rs_ls ** 2
+        for sprite in self.all_sprites:
+            sp_c = find_center(sprite)
+            r = (pos[0] - sp_c[0]) ** 2 + (pos[1] - sp_c[1]) ** 2
+            if r >= rs_ls2:
+                continue
+            r = sqrt(r)
+            dl = int(light_power * (1 - r/rs_ls))
+            if dl == 0:
+                continue
+            for point in sprite.tracking_points:
+                if self.ray_tracing(source, sprite, pos, point, r):
+                    sprite.light += dl
+                    break
+
+    def ray_tracing(self, shooter: LightedSprite, target: LightedSprite, a=None, b=None, r=None):
         """Проверяет доходит ли луч от shooter до target."""
         if a is None:
             a = find_center(shooter)
@@ -293,10 +304,11 @@ class Level(pg.Surface):
 
         dx = b[0] - a[0]
         dy = b[1] - a[1]
-        r = sqrt(dx ** 2 + dy ** 2)
+        if r == None:
+            r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
             return True
-        m = 16
+        m = 8
         dx = dx / r * m
         dy = dy / r * m
         now_cord = list(a)
@@ -343,4 +355,4 @@ while running:
     pg.display.flip()
 
     clock.tick(FPS)
-    print(clock.get_fps())
+    print("\rFPS:", clock.get_fps(), end='')
