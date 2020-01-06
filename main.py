@@ -7,6 +7,7 @@ import pygame as pg
 
 # инициализация pygame
 FPS = 60
+MINIMUM_LIGHT = 30
 pg.init()
 size = WIDTH, HEIGHT = 600, 600
 screen = pg.display.set_mode(size)
@@ -92,7 +93,7 @@ class LightedSprite(pg.sprite.Sprite):
         super().__init__(*groups)
         self.real_image = None
         self._image = None
-        self._light = 0
+        self._light = MINIMUM_LIGHT
 
     @property
     def image(self):
@@ -114,7 +115,6 @@ class LightedSprite(pg.sprite.Sprite):
 
     def put_light(self):
         self._image = self.real_image.copy()
-        r = self._image.get_rect()
         dark = self._image.copy()
         dark.fill((0, 0, 0, max(0, min(255, 255 - self.light))))
         self._image.blit(dark, (0, 0))
@@ -138,76 +138,106 @@ class Tile(LightedSprite):
         self.is_collide = is_collide
         self.level = level
         self.image = Tile.tile_images[image_type]
-        self.light = 0
         self.rect = pg.Rect(level.tile_width * pos_x, level.tile_height * pos_y,
-                            level.tile_width, level.tile_height,)
+                            level.tile_width, level.tile_height, )
 
 
 class Player(LightedSprite):
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
-    update_light_speed = 10
+    update_light_speed = 30
 
     def __init__(self, pos_x, pos_y, level):
         super().__init__(level.all_sprites, level.player_group)
         self.level = level
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
+
         self.cur_frame = 0
         self.update_image_speed = 10
         self.image = Player.frames[self.cur_frame]
         self.real_pos = list(self.rect.topleft)
         self.speed = 1
 
-        self.light_power = 255
-        self.count_move_frames = 0
-        self.last_light_pos = self.rect.center
-        self.level.add_light(self.last_light_pos, self.light_power)
+        self.inventory = {"torch": 3}
 
-    def update(self):
-        dx = 0
-        dy = 0
-        if pg.key.get_pressed()[pg.K_UP]:
-            dy -= self.speed
-        if pg.key.get_pressed()[pg.K_DOWN]:
-            dy += self.speed
-        if pg.key.get_pressed()[pg.K_LEFT]:
-            dx -= self.speed
-        if pg.key.get_pressed()[pg.K_RIGHT]:
-            dx += self.speed
+        self.level.relight_it(self)
 
-        if dx and dy:  # Выравниваем скорость
-            dx = dx / (2 ** .5)
-            dy = dy / (2 ** .5)
+    def update(self, *args):
+        if args:
+            if isinstance(args[0], pg.event.EventType):
+                event = args[0]
+                if event.type == pg.KEYUP and event.key == pg.K_e:
+                    use_that = pg.sprite.spritecollideany(self, level.useable_objects_group)
+                    if use_that is None:
+                        self.place_torch()
+                    else:
+                        use_that.use(self)
 
-        # изменяем координаты
-        if dx or dy:
-            if dx:
-                self.real_pos[0] += dx
-                self.rect.x = ceil(self.real_pos[0])
-                ox = int(dx//abs(dx))
-                while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                    self.real_pos[0] -= ox
-                    self.rect.x -= ox  # выталкивает персонажа из стен
-            if dy:
-                self.real_pos[1] += dy
-                self.rect.y = ceil(self.real_pos[1])
-                oy = int(dy//abs(dy))
-                while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                    self.real_pos[1] -= oy
-                    self.rect.y -= oy  # выталкивает персонажа из стен
+        else:
+            dx = 0
+            dy = 0
+            if pg.key.get_pressed()[pg.K_w]:
+                dy -= self.speed
+            if pg.key.get_pressed()[pg.K_s]:
+                dy += self.speed
+            if pg.key.get_pressed()[pg.K_a]:
+                dx -= self.speed
+            if pg.key.get_pressed()[pg.K_d]:
+                dx += self.speed
 
-            # Пересчёт света
-            self.count_move_frames += 1
-            if self.count_move_frames == self.update_light_speed:
-                self.count_move_frames = 0
-                self.level.remove_light(self.last_light_pos, self.light_power)
-                self.level.add_light(self.rect.center, self.light_power)
-                self.last_light_pos = self.rect.center
+            if dx and dy:  # Выравниваем скорость
+                dx = dx / (2 ** .5)
+                dy = dy / (2 ** .5)
+
+            # изменяем координаты
+            if dx or dy:
+                if dx:
+                    self.real_pos[0] += dx
+                    self.rect.x = ceil(self.real_pos[0])
+                    ox = int(dx // abs(dx))
+                    while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                        self.real_pos[0] -= ox
+                        self.rect.x -= ox  # выталкивает персонажа из стен
+                if dy:
+                    self.real_pos[1] += dy
+                    self.rect.y = ceil(self.real_pos[1])
+                    oy = int(dy // abs(dy))
+                    while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                        self.real_pos[1] -= oy
+                        self.rect.y -= oy  # выталкивает персонажа из стен
+
                 self.level.relight_it(self)
 
-        # изменяем кадр
-        self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
-        self.image = self.frames[self.cur_frame // self.update_image_speed]
+            # изменяем кадр
+            self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
+            self.image = self.frames[self.cur_frame // self.update_image_speed]
+
+    def add_torch(self):
+        self.inventory["torch"] += 1
+
+    def place_torch(self):
+        if self.inventory["torch"]:
+            Torch(find_center(self), self.level)
+            self.inventory["torch"] -= 1
+
+
+class Torch(LightedSprite):
+    default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
+
+    def __init__(self, pos_of_center: Tuple[int, int], level):
+        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group)
+        self.level = level
+        self.image = self.frames[0]
+        self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
+                                                  pos_of_center[1] - self.default_rect.h // 2)
+        self.level.relight_it(self)
+        self.light_power = 160
+        self.level.add_light(self.rect.center, self.light_power)
+
+    def use(self, player):
+        self.level.remove_light(self.rect.center, self.light_power)
+        player.add_torch()
+        self.kill()
 
 
 class Level(pg.Surface):
@@ -219,7 +249,7 @@ class Level(pg.Surface):
     tiles: List[List[Tile]]
     light_sources: Set[Tuple[Tuple[int, int], int]]
 
-    tile_width = tile_height = 32
+    tile_width = tile_height = 64
 
     def __init__(self, level_num):
         # группы спрайтов
@@ -228,7 +258,8 @@ class Level(pg.Surface):
         self.tiles_group = pg.sprite.Group()
         self.player_group = pg.sprite.Group()
         self.enemies_group = pg.sprite.Group()
-
+        self.objects_group = pg.sprite.Group()
+        self.useable_objects_group = pg.sprite.Group()
         self.light_sources = set()
 
         self.player, self.cols, self.rows = None, None, None
@@ -281,6 +312,7 @@ class Level(pg.Surface):
 
         # Рисуем спрайты в определёной последовательности
         self.tiles_group.draw(self)
+        self.objects_group.draw(self)
         self.enemies_group.draw(self)
         self.player_group.draw(self)
 
@@ -303,7 +335,7 @@ class Level(pg.Surface):
         if r >= rs_ls2:
             return None
         r = sqrt(r)
-        dl = int(light_power * (1 - r / rs_ls))
+        dl = round(light_power * (1 - r / rs_ls))
         for point in target.tracking_points:
             if self.ray_tracing(target, pos, point, r):
                 target.light += dl
@@ -311,6 +343,8 @@ class Level(pg.Surface):
 
     def count_light_for_source(self, pos, light_power):
         for sprite in self.all_sprites:
+            if isinstance(sprite, Torch):
+                print('\r TORCH LIGHTED')
             self.count_light_between(pos, light_power, sprite)
 
     def add_light(self, pos, light_power):
@@ -380,6 +414,8 @@ while running:
             terminate()
         elif event.type == pg.MOUSEBUTTONDOWN:
             pass
+        elif event.type == pg.KEYUP:
+            level.update(event)
     level.update()
 
     screen.fill(pg.Color("black"))
