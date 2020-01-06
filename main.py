@@ -7,7 +7,7 @@ import pygame as pg
 
 # инициализация pygame
 FPS = 60
-MINIMUM_LIGHT = 30
+MINIMUM_LIGHT = 255
 pg.init()
 size = WIDTH, HEIGHT = 600, 600
 screen = pg.display.set_mode(size)
@@ -138,6 +138,17 @@ class LightedSprite(pg.sprite.Sprite):
                 self.rect.bottomright]
 
 
+class AnimationSprite:
+    def __init__(self, update_image_speed, cur_frame=0):
+        self.cur_frame = 0
+        self.update_image_speed = 10
+        self.image = self.frames[self.cur_frame]
+
+    def update(self):
+        self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
+        self.image = self.frames[self.cur_frame // self.update_image_speed]
+
+
 class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
     monochrome = True
@@ -154,7 +165,7 @@ class Tile(LightedSprite):
                             level.tile_width, level.tile_height, )
 
 
-class Player(LightedSprite):
+class Player(LightedSprite, AnimationSprite):
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
     monochrome = False
     update_light_speed = 30
@@ -165,9 +176,8 @@ class Player(LightedSprite):
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
 
-        self.cur_frame = 0
-        self.update_image_speed = 10
-        self.image = Player.frames[self.cur_frame]
+        AnimationSprite.__init__(self, update_image_speed=10, cur_frame=0)
+
         self.real_pos = list(self.rect.topleft)
         self.speed = 1
 
@@ -222,8 +232,7 @@ class Player(LightedSprite):
                 self.level.relight_it(self)
 
             # изменяем кадр
-            self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
-            self.image = self.frames[self.cur_frame // self.update_image_speed]
+            AnimationSprite.update(self)
 
     def add_torch(self):
         self.inventory["torch"] += 1
@@ -234,16 +243,19 @@ class Player(LightedSprite):
             self.inventory["torch"] -= 1
 
 
-class Torch(LightedSprite):
+class Torch(LightedSprite, AnimationSprite):
     default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
     monochrome = False
 
     def __init__(self, pos_of_center: Tuple[int, int], level):
         super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group)
         self.level = level
-        self.image = self.frames[0]
+
+        AnimationSprite.__init__(self, update_image_speed=10, cur_frame=0)
+
         self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
                                                   pos_of_center[1] - self.default_rect.h // 2)
+
         self.level.relight_it(self)
         self.light_power = 255
         self.level.add_light(self.rect.center, self.light_power)
@@ -252,6 +264,10 @@ class Torch(LightedSprite):
         self.level.remove_light(self.rect.center, self.light_power)
         player.add_torch()
         self.kill()
+
+    def update(self, *args):
+        # изменяем кадр
+        AnimationSprite.update(self)
 
 
 class Level(pg.Surface):
@@ -358,7 +374,6 @@ class Level(pg.Surface):
     def count_light_for_source(self, pos, light_power):
         for sprite in self.all_sprites:
             if isinstance(sprite, Torch):
-                print('\r TORCH LIGHTED')
             self.count_light_between(pos, light_power, sprite)
 
     def add_light(self, pos, light_power):
@@ -374,7 +389,7 @@ class Level(pg.Surface):
         self.count_light_for_source(pos, -light_power)
 
     def relight_it(self, sprite: LightedSprite):
-        sprite.light = 0
+        sprite.light = MINIMUM_LIGHT
         for pos, light_power in self.light_sources:
             self.count_light_between(pos, light_power, sprite)
 
