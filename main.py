@@ -7,7 +7,7 @@ import pygame as pg
 
 # инициализация pygame
 FPS = 60
-MINIMUM_LIGHT = 255
+MINIMUM_LIGHT = 5
 pg.init()
 size = WIDTH, HEIGHT = 600, 600
 screen = pg.display.set_mode(size)
@@ -140,8 +140,8 @@ class LightedSprite(pg.sprite.Sprite):
 
 class AnimationSprite:
     def __init__(self, update_image_speed, cur_frame=0):
-        self.cur_frame = 0
-        self.update_image_speed = 10
+        self.update_image_speed = update_image_speed
+        self.cur_frame = cur_frame
         self.image = self.frames[self.cur_frame]
 
     def update(self):
@@ -267,7 +267,10 @@ class Torch(LightedSprite, AnimationSprite):
 
     def update(self, *args):
         # изменяем кадр
-        AnimationSprite.update(self)
+        if args:  # Пропускаем евенты нажатия на клавиш и т.п.
+            pass
+        else:
+            AnimationSprite.update(self)
 
 
 class Level(pg.Surface):
@@ -354,7 +357,7 @@ class Level(pg.Surface):
         screen.blit(self, rect, rect.copy().move(x, y))
 
     def count_light_between(self, pos, light_power, target: LightedSprite):
-        ray_step = 32
+        ray_step = 40
         light_step = 5
 
         # просто константы для более бытрого счёта
@@ -373,7 +376,6 @@ class Level(pg.Surface):
 
     def count_light_for_source(self, pos, light_power):
         for sprite in self.all_sprites:
-            if isinstance(sprite, Torch):
             self.count_light_between(pos, light_power, sprite)
 
     def add_light(self, pos, light_power):
