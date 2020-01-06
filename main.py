@@ -89,10 +89,13 @@ def start_screen():
 
 
 class LightedSprite(pg.sprite.Sprite):
+    monochrome = True
+
     def __init__(self, *groups):
         super().__init__(*groups)
         self.real_image = None
         self._image = None
+        self.black_image = None
         self._light = MINIMUM_LIGHT
 
     @property
@@ -115,9 +118,17 @@ class LightedSprite(pg.sprite.Sprite):
 
     def put_light(self):
         self._image = self.real_image.copy()
-        dark = self._image.copy()
-        dark.fill((0, 0, 0, max(0, min(255, 255 - self.light))))
-        self._image.blit(dark, (0, 0))
+        dark_image = self._image.copy()
+        r = dark_image.get_rect()
+        dark = 255 - max(0, min(255, self.light))
+        if self.monochrome:
+            dark_image.fill((0, 0, 0, dark))
+        else:
+            # сохраняем отношения прозрачности. В частности прозрачное остаётся прозрачным
+            for i in range(r.h):
+                for j in range(r.w):
+                    dark_image.set_at((j, i), (0, 0, 0, dark_image.get_at((j, i)).a * dark // 255))
+        self._image.blit(dark_image, (0, 0))
 
     @property
     def tracking_points(self):
@@ -129,6 +140,7 @@ class LightedSprite(pg.sprite.Sprite):
 
 class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
+    monochrome = True
 
     def __init__(self, image_type, is_collide, pos_x, pos_y, level):
         if is_collide:
@@ -144,6 +156,7 @@ class Tile(LightedSprite):
 
 class Player(LightedSprite):
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
+    monochrome = False
     update_light_speed = 30
 
     def __init__(self, pos_x, pos_y, level):
@@ -223,6 +236,7 @@ class Player(LightedSprite):
 
 class Torch(LightedSprite):
     default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
+    monochrome = False
 
     def __init__(self, pos_of_center: Tuple[int, int], level):
         super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group)
@@ -231,7 +245,7 @@ class Torch(LightedSprite):
         self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
                                                   pos_of_center[1] - self.default_rect.h // 2)
         self.level.relight_it(self)
-        self.light_power = 160
+        self.light_power = 255
         self.level.add_light(self.rect.center, self.light_power)
 
     def use(self, player):
