@@ -6,7 +6,7 @@ from typing import Tuple, Set, Any, List
 import pygame as pg
 
 # инициализация pygame
-FPS = 60
+FPS = 30
 MINIMUM_LIGHT = 5
 pg.init()
 size = WIDTH, HEIGHT = 600, 600
@@ -85,14 +85,19 @@ def start_screen():
         clock.tick(FPS)
 
 
+# OTHER TOOLS
+
+def sign(a):
+    return -1 if a < 0 else 1
+
+
 # CLASSES
 
 
 class LightedSprite(pg.sprite.Sprite):
-    monochrome = True
-
-    def __init__(self, *groups):
+    def __init__(self, *groups, monochrome=True):
         super().__init__(*groups)
+        self.monochrome = monochrome
         self.real_image = None
         self._image = None
         self.black_image = None
@@ -149,15 +154,49 @@ class AnimationSprite:
         self.image = self.frames[self.cur_frame // self.update_image_speed]
 
 
+class MoveableSprite:
+    def __init__(self, pos, speed):
+        self.speed = speed
+        self.real_pos = list(pos)
+
+    def move(self, dx, dy):
+        if not dx and not dy:
+            return None
+        elif not dy:
+            dx, dy = self.speed * sign(dx), 0
+        elif not dx:
+            dx, dy = 0, self.speed * sign(dy)
+        else:
+            r = sqrt(dx ** 2 + dy ** 2)
+            dx, dy = self.speed * dx / r, self.speed * dy / r
+
+        # Изменяем координаты и выталкиваем персонажа из стен
+        if dx:
+            self.real_pos[0] += dx
+            self.rect.x = round(self.real_pos[0])
+            sign_x = sign(dx)
+            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                self.real_pos[0] -= sign_x
+                self.rect.x -= sign_x
+        if dy:
+            self.real_pos[1] += dy
+            self.rect.y = round(self.real_pos[1])
+            sign_y = sign(dy)
+            while pg.sprite.spritecollideany(self, self.level.collided_sprites):
+                self.real_pos[1] -= sign_y
+                self.rect.y -= sign_y  # выталкивает персонажа из стен
+
+
 class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
-    monochrome = True
 
     def __init__(self, image_type, is_collide, pos_x, pos_y, level):
         if is_collide:
-            super().__init__(level.tiles_group, level.all_sprites, level.collided_sprites)
+            super().__init__(level.tiles_group, level.all_sprites, level.collided_sprites,
+                             monochrome=True)
         else:
-            super().__init__(level.tiles_group, level.all_sprites)
+            super().__init__(level.tiles_group, level.all_sprites,
+                             monochrome=True)
         self.is_collide = is_collide
         self.level = level
         self.image = Tile.tile_images[image_type]
@@ -165,21 +204,21 @@ class Tile(LightedSprite):
                             level.tile_width, level.tile_height, )
 
 
-class Player(LightedSprite, AnimationSprite):
+class Player(LightedSprite, AnimationSprite, MoveableSprite):
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
-    monochrome = False
-    update_light_speed = 30
 
     def __init__(self, pos_x, pos_y, level):
-        super().__init__(level.all_sprites, level.player_group)
+        super().__init__(level.all_sprites, level.player_group, monochrome=False)
         self.level = level
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
 
-        AnimationSprite.__init__(self, update_image_speed=10, cur_frame=0)
-
-        self.real_pos = list(self.rect.topleft)
-        self.speed = 1
+        AnimationSprite.__init__(self,
+                                 update_image_speed=10,
+                                 cur_frame=0)
+        MoveableSprite.__init__(self,
+                                pos=self.rect.topleft,
+                                speed=5)
 
         self.inventory = {"torch": 3}
 
@@ -208,28 +247,9 @@ class Player(LightedSprite, AnimationSprite):
             if pg.key.get_pressed()[pg.K_d]:
                 dx += self.speed
 
-            if dx and dy:  # Выравниваем скорость
-                dx = dx / (2 ** .5)
-                dy = dy / (2 ** .5)
+            MoveableSprite.move(self, dx, dy)
 
-            # изменяем координаты
-            if dx or dy:
-                if dx:
-                    self.real_pos[0] += dx
-                    self.rect.x = ceil(self.real_pos[0])
-                    ox = int(dx // abs(dx))
-                    while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                        self.real_pos[0] -= ox
-                        self.rect.x -= ox  # выталкивает персонажа из стен
-                if dy:
-                    self.real_pos[1] += dy
-                    self.rect.y = ceil(self.real_pos[1])
-                    oy = int(dy // abs(dy))
-                    while pg.sprite.spritecollideany(self, self.level.collided_sprites):
-                        self.real_pos[1] -= oy
-                        self.rect.y -= oy  # выталкивает персонажа из стен
-
-                self.level.relight_it(self)
+            self.level.relight_it(self)
 
             # изменяем кадр
             AnimationSprite.update(self)
@@ -243,12 +263,42 @@ class Player(LightedSprite, AnimationSprite):
             self.inventory["torch"] -= 1
 
 
+class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
+    default_rect, frames = cut_sheet(load_image('enemy_sheet.png'), 4, 1)
+
+    def __init__(self, pos_x, pos_y, level):
+        super().__init__(level.all_sprites, level.enemies_group, monochrome=False)
+        self.level = level
+        self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
+                                                    level.tile_height * pos_y)
+
+        AnimationSprite.__init__(self,
+                                 update_image_speed=10,
+                                 cur_frame=0)
+        MoveableSprite.__init__(self,
+                                pos=self.rect.topleft,
+                                speed=.5)
+
+        self.level.relight_it(self)
+
+    def update(self, *args):
+        if args:
+            pass
+        else:
+            #MoveableSprite.move(self, dx, dy)
+
+            self.level.relight_it(self)
+
+            # изменяем кадр
+            AnimationSprite.update(self)
+
+
 class Torch(LightedSprite, AnimationSprite):
     default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
-    monochrome = False
 
     def __init__(self, pos_of_center: Tuple[int, int], level):
-        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group)
+        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
+                         monochrome=False)
         self.level = level
 
         AnimationSprite.__init__(self, update_image_speed=10, cur_frame=0)
@@ -256,9 +306,9 @@ class Torch(LightedSprite, AnimationSprite):
         self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
                                                   pos_of_center[1] - self.default_rect.h // 2)
 
-        self.level.relight_it(self)
         self.light_power = 255
         self.level.add_light(self.rect.center, self.light_power)
+        self.level.relight_it(self)
 
     def use(self, player):
         self.level.remove_light(self.rect.center, self.light_power)
@@ -332,6 +382,9 @@ class Level(pg.Surface):
                 elif level[y][x] == '@':
                     tile = Tile('empty', False, x, y, self)
                     player_pos = x, y
+                elif level[y][x] == '%':
+                    tile = Tile('empty', False, x, y, self)
+                    Enemy(x, y, self)
                 self.tiles[-1].append(tile)
         self.player = Player(*player_pos, self)
 
