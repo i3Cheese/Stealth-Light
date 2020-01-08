@@ -13,8 +13,8 @@ screen = pg.display.set_mode(size)
 clock = pg.time.Clock()
 running = True
 
-MINIMUM_LIGHT = 10
-UPDATE_FRAME = 10
+MINIMUM_LIGHT = 50
+UPDATE_FRAME = 30
 Point = Union[Tuple[float, float]]
 
 
@@ -301,7 +301,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         super().__init__(level.all_sprites, level.enemies_group,
                          monochrome=False,
                          level=level)
-        self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
+        self.rect = self.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
 
         AnimationSprite.__init__(self,
@@ -309,7 +309,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
                                  cur_frame=0)
         MoveableSprite.__init__(self,
                                 pos=self.rect.topleft,
-                                speed=30)
+                                speed=3)
 
         self.visual_range = 256
         self.num_of_rays = 40
@@ -324,6 +324,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         else:
             self.frame_from_last_look += 1
             if self.frame_from_last_look >= UPDATE_FRAME:
+                self.frame_from_last_look = 0
                 self.target = self.look_around()
 
             if self.target:
@@ -343,42 +344,45 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         priority_of_target = 0
         for _ in range(self.num_of_rays):
             new_target, new_priority_of_target = self.look_to(
-                (self.visual_range * cos(now_angle),
-                 self.visual_range * sin(now_angle)),
+                self.visual_range * cos(now_angle),
+                self.visual_range * sin(now_angle),
                 self.visual_range)
-            if new_priority_of_target > priority_of_target:
+            if new_priority_of_target >= priority_of_target:
                 target = new_target
                 priority_of_target = new_priority_of_target
             now_angle += delta_angle
-        return target
 
-    def look_to(self, pos: Point, r: Optional[float] = None) \
+        if target is None:
+            return None
+        else:
+            return target[0] - self.rect.width // 2, target[1] - self.rect.height // 2
+        # Для стремления прийти в эту точку центром.
+
+    def look_to(self, dx: float, dy: float, r: Optional[float] = None) \
             -> Tuple[Optional[Point], int]:
         """Запускает луч до pos, возвращаем максимальное приоритетную точку и её приоритет.
         Приоритет тем выше тем выше освещеность точки. У игрока максимальный приоритет. """
         target = None
         target_priority = 0
 
-        dx = self.rect.x - pos[0]
-        dy = self.rect.y - pos[1]
         if r is None:
             r = sqrt(dx ** 2 + dy ** 2)
-        if r == 0:
+        if r <= 0:
             return target, target_priority
 
-        m = 6  # Модификатор. Ускоряет просчёт
+        m = 2  # Модификатор. Ускоряет просчёт
 
         r /= m
         r = ceil(r)
         dx = dx / r
         dy = dy / r
-        new_cord = list(pos)
+        new_cord = list(self.rect.center)
         for _ in range(int(r) + 1):
             tile = self.level.cords_to_tile(new_cord)
             if tile is not None:
                 if tile.light > MINIMUM_LIGHT:
                     if self.level.player.rect.collidepoint(*new_cord):
-                        target = tuple(new_cord)
+                        target = self.level.player.rect.center
                         target_priority = self.player_priority
                     if tile.light >= target_priority:
                         target = tuple(new_cord)
