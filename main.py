@@ -6,7 +6,7 @@ from typing import Tuple, Set, Any, List, Union, Optional
 import pygame as pg
 
 # инициализация pygame
-FPS = 60
+FPS = 30
 pg.init()
 size = WIDTH, HEIGHT = 600, 600
 screen = pg.display.set_mode(size)
@@ -14,7 +14,7 @@ clock = pg.time.Clock()
 running = True
 
 MINIMUM_LIGHT = 50
-UPDATE_FRAME = 30
+UPDATE_FRAME = 15
 Point = Union[Tuple[float, float]]
 
 
@@ -87,6 +87,12 @@ def start_screen():
                 return  # начинаем игру
         pg.display.flip()
         clock.tick(FPS)
+
+
+def start_a_game(level_num=1):
+    global level
+    level = Level(1)
+    start_screen()
 
 
 # OTHER TOOLS
@@ -163,10 +169,12 @@ class AnimationSprite:
         self.update_image_speed = update_image_speed
         self.cur_frame = cur_frame
         self.image = self.frames[self.cur_frame]
+        self.mask = pg.mask.from_surface(self.image)
 
     def update(self):
         self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
         self.image = self.frames[self.cur_frame // self.update_image_speed]
+        self.mask = pg.mask.from_surface(self.image)
 
 
 class MoveableSprite:
@@ -292,6 +300,10 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
             Torch(find_center(self), self.level)
             self.inventory["torch"] -= 1
 
+    def death(self):
+        print('\rPlayer death')
+        start_a_game()
+
 
 class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
     default_rect, frames = cut_sheet(load_image('enemy_sheet.png'), 4, 1)
@@ -302,7 +314,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
                          monochrome=False,
                          level=level)
         self.rect = self.default_rect.copy().move(level.tile_width * pos_x,
-                                                    level.tile_height * pos_y)
+                                                  level.tile_height * pos_y)
 
         AnimationSprite.__init__(self,
                                  update_image_speed=10,
@@ -312,7 +324,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
                                 speed=3)
 
         self.visual_range = 256
-        self.num_of_rays = 40
+        self.num_of_rays = 30
         self.target: Optional[Point] = None
         self.frame_from_last_look = 0
 
@@ -330,6 +342,9 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
             if self.target:
                 if MoveableSprite.move_to(self, self.target):
                     self.target = None
+
+            if pg.sprite.collide_mask(self, self.level.player):
+                self.level.player.death()
 
             # изменяем кадр
             AnimationSprite.update(self)
@@ -370,7 +385,7 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         if r <= 0:
             return target, target_priority
 
-        m = 2  # Модификатор. Ускоряет просчёт
+        m = 20  # Модификатор. Ускоряет просчёт
 
         r /= m
         r = ceil(r)
@@ -438,6 +453,8 @@ class Level(pg.Surface):
     tile_width = tile_height = 64
 
     def __init__(self, level_num):
+        self.level_num = level_num
+
         # группы спрайтов
         self.all_sprites = pg.sprite.Group()
         self.collided_sprites = pg.sprite.Group()
@@ -513,8 +530,8 @@ class Level(pg.Surface):
         screen.blit(self, rect, rect.copy().move(x, y))
 
     def count_light_between(self, pos, light_power, target: LightedSprite):
-        ray_step = 40
-        light_step = 5
+        ray_step = 5
+        light_step = 40
 
         # просто константы для более бытрого счёта
         rs_ls = ray_step * light_step
@@ -595,8 +612,9 @@ class Level(pg.Surface):
             return None
 
 
-level = Level(1)
-start_screen()
+level = None
+start_a_game()
+
 while running:
     for event in pg.event.get():
         if event.type == pg.QUIT:
