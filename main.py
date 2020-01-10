@@ -1,7 +1,7 @@
 import os
 import sys
 from math import ceil, sqrt, pi, cos, sin
-from typing import Tuple, Set, Any, List, Union, Optional
+from typing import Tuple, Set, List, Union, Optional
 
 import pygame as pg
 
@@ -16,6 +16,8 @@ running = True
 MINIMUM_LIGHT = 50
 UPDATE_FRAME = 15
 Point = Union[Tuple[float, float]]
+
+FONT = pg.font.Font(None, 30)
 
 
 # IMAGE TOOLS
@@ -102,6 +104,27 @@ def sign(a: float):
 
 
 # CLASSES
+
+
+class Button(pg.sprite.Sprite):
+    def __init__(self, pos: Point, text: str, func, *groups):
+        super().__init__(*groups)
+
+        self.func = func
+
+        self.image = load_image('button.png')
+        self.rect = self.image.get_rect().move(*pos)
+
+        string_rendered = FONT.render(text, 1, pg.Color('black'))
+        intro_rect = string_rendered.get_rect()
+        intro_rect.center = self.rect.center
+        screen.blit(string_rendered, intro_rect)
+
+    def update(self, *args):
+        if args and isinstance(args[0], pg.event.EventType):
+            event = args[0]
+            if event.type == pg.MOUSEBUTTONUP and event.button == pg.BUTTON_LEFT:
+                self.func()
 
 
 class LightedSprite(pg.sprite.Sprite):
@@ -231,7 +254,8 @@ class MoveableSprite:
 class Tile(LightedSprite):
     tile_images = {'wall': load_image('wall.png'), 'empty': load_image('empty.png')}
 
-    def __init__(self, image_type, is_collide, pos_x, pos_y, level):
+    def __init__(self, image_type: str, is_collide: bool, pos_x: int, pos_y: int, level):
+        # Инициализируем спрайт и освещение
         super().__init__(level.tiles_group, level.all_sprites,
                          monochrome=True,
                          level=level)
@@ -247,14 +271,17 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
 
     def __init__(self, pos_x, pos_y, level):
-        super().__init__(level.all_sprites, level.player_group, level=level, monochrome=False)
+        # Инициализируем спрайт и освещение
+        super().__init__(level.all_sprites, level.player_group,
+                         level=level,
+                         monochrome=False)
         self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
                                                     level.tile_height * pos_y)
 
-        AnimationSprite.__init__(self,
+        AnimationSprite.__init__(self,  # иницаилизируем анимацию
                                  update_image_speed=10,
                                  cur_frame=0)
-        MoveableSprite.__init__(self,
+        MoveableSprite.__init__(self,  # инициализируем двжение
                                 pos=self.rect.topleft,
                                 speed=5)
 
@@ -293,16 +320,22 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
         super().update(*args)
 
     def add_torch(self):
+        """Добавляет факел в инвентарь"""
         self.inventory["torch"] += 1
 
     def place_torch(self):
+        """Ставит факел на карту из инвенторя"""
         if self.inventory["torch"]:
             Torch(find_center(self), self.level)
             self.inventory["torch"] -= 1
 
     def death(self):
+        """Игрок умирает"""
         print('\rPlayer death')
         start_a_game()
+
+    def win(self):
+        pass
 
 
 class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
@@ -310,19 +343,22 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
     player_priority = 10000
 
     def __init__(self, pos_x: int, pos_y: int, level):
+        # Инициализируем спрайт и освещение
         super().__init__(level.all_sprites, level.enemies_group,
                          monochrome=False,
                          level=level)
+        # Задаём координаты
         self.rect = self.default_rect.copy().move(level.tile_width * pos_x,
                                                   level.tile_height * pos_y)
 
-        AnimationSprite.__init__(self,
+        AnimationSprite.__init__(self,  # иницаилизируем анимацию
                                  update_image_speed=10,
                                  cur_frame=0)
-        MoveableSprite.__init__(self,
+        MoveableSprite.__init__(self,  # инициализируем двжение
                                 pos=self.rect.topleft,
                                 speed=3)
 
+        # инициализация зрения
         self.visual_range = 256
         self.num_of_rays = 30
         self.target: Optional[Point] = None
@@ -441,6 +477,22 @@ class Torch(LightedSprite, AnimationSprite):
         super().update(*args)
 
 
+class Exit(LightedSprite):
+    default_image = load_image('exit.png')
+
+    def __init__(self, pos_x: int, pos_y: int, level):
+        # Инициализируем спрайт и освещение
+        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
+                         monochrome=False,
+                         level=level)
+        # Задаём координаты
+        self.image = self.default_image
+        self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
+
+    def use(self, player):
+        self.level.win()
+
+
 class Level(pg.Surface):
     width: int
     height: int
@@ -505,6 +557,9 @@ class Level(pg.Surface):
                 elif level[y][x] == '%':
                     tile = Tile('empty', False, x, y, self)
                     Enemy(x, y, self)
+                elif level[y][x] == '$':
+                    tile = Tile('empty', False, x, y, self)
+                    Exit(x, y, self)
                 self.tiles[-1].append(tile)
         self.player = Player(*player_pos, self)
 
@@ -610,6 +665,9 @@ class Level(pg.Surface):
             return self.tiles[y][x]
         else:
             return None
+
+    def win(self):
+        self.__init__(self.level_num + 1)
 
 
 level = None
