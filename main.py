@@ -1,23 +1,28 @@
 import os
 import sys
 from math import ceil, sqrt, pi, cos, sin
-from typing import Tuple, Set, List, Union, Optional
+from typing import Tuple, Set, List, Union, Optional, Dict, NoReturn
 
 import pygame as pg
 
 # инициализация pygame
 FPS = 30
 pg.init()
-size = WIDTH, HEIGHT = 600, 600
-screen = pg.display.set_mode(size)
+SIZE = WIDTH, HEIGHT = 600, 600
+screen = pg.display.set_mode(SIZE)
 clock = pg.time.Clock()
 running = True
 
 MINIMUM_LIGHT = 50
 UPDATE_FRAME = 15
+
 Point = Union[Tuple[float, float]]
+UserData = Dict[str, str]
 
 FONT = pg.font.Font(None, 30)
+
+SAVE_FILE = 'stealth_light.save'
+ENCODING = 'utf-8'
 
 
 # IMAGE TOOLS
@@ -57,23 +62,17 @@ def find_center(s: pg.sprite.Sprite):
 # WINDOW TOOLS
 
 
-def terminate():
+def terminate() -> NoReturn:
     pg.quit()
     sys.exit()
 
 
-def start_screen():
-    intro_text = ["ЗАСТАВКА", "",
-                  "Правила игры",
-                  "Если в правилах несколько строк,",
-                  "приходится выводить их построчно"]
-
-    fon = pg.transform.scale(load_image('fon.png'), (WIDTH, HEIGHT))
+def some_screen(text: List[str], image: str) -> None:
+    fon = pg.transform.scale(load_image(image), (WIDTH, HEIGHT))
     screen.blit(fon, (0, 0))
-    font = pg.font.Font(None, 30)
     text_coord = 50
-    for line in intro_text:
-        string_rendered = font.render(line, 1, pg.Color('black'))
+    for line in text:
+        string_rendered = FONT.render(line, 1, pg.Color('black'))
         intro_rect = string_rendered.get_rect()
         text_coord += 10
         intro_rect.top = text_coord
@@ -81,50 +80,176 @@ def start_screen():
         text_coord += intro_rect.height
         screen.blit(string_rendered, intro_rect)
 
+    finished = False
+
+    # Что бы не закрыть экран сразу после открытия
+    pg.display.flip()
+    pg.time.wait(600)
+    pg.event.clear()
     while True:
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 terminate()
-            elif event.type == pg.KEYDOWN or event.type == pg.MOUSEBUTTONDOWN:
-                return  # начинаем игру
+            elif event.type == pg.MOUSEBUTTONUP or event.type == pg.KEYUP:
+                finished = True
+
+        if finished:
+            break
+
         pg.display.flip()
         clock.tick(FPS)
 
 
-def start_a_game(level_num=1):
-    global level
-    level = Level(1)
-    start_screen()
+def death_screen() -> None:
+    text = ["Вы умерли!",
+            "",
+            "В следующий раз будьте аккуратны",
+            "",
+            "Нажмите любую клавишу что бы продолжить"]
+
+    some_screen(text, 'fon.png')
+
+
+def win_screen() -> None:
+    text = ["Вы Выиграли!",
+            "",
+            "В следующий раз будьте аккуратны.",
+            "",
+            "Нажмите любую клавишу что бы продолжить."]
+
+    some_screen(text, 'fon.png')
 
 
 # OTHER TOOLS
 
-def sign(a: float):
+
+def sign(a: float) -> int:
     return -1 if a < 0 else 1
+
+
+def read_saved_data() -> UserData:
+    dictionary = dict()
+    if os.path.isfile(SAVE_FILE):
+        with open(SAVE_FILE, 'r', encoding=ENCODING) as f:
+            line = f.readline()
+            while line:
+                a, b = line.strip().split('=')
+                dictionary[a] = b
+                line = f.readline()
+
+    return dictionary
+
+
+def save_data(dictionary: UserData) -> None:
+    with open(SAVE_FILE, 'w', encoding=ENCODING) as f:
+        for key, data in dictionary.items():
+            f.write(f'{key}={data}')
 
 
 # CLASSES
 
 
 class Button(pg.sprite.Sprite):
-    def __init__(self, pos: Point, text: str, func, *groups):
+    def __init__(self, text: str, func, *groups,
+                 pos: Optional[Point] = None,
+                 center_pos: Optional[Point] = None):
         super().__init__(*groups)
 
         self.func = func
 
         self.image = load_image('button.png')
-        self.rect = self.image.get_rect().move(*pos)
+        self.rect = self.image.get_rect()
+        if pos:
+            self.rect.topleft = pos
+        else:
+            self.rect.center = center_pos
 
         string_rendered = FONT.render(text, 1, pg.Color('black'))
         intro_rect = string_rendered.get_rect()
-        intro_rect.center = self.rect.center
-        screen.blit(string_rendered, intro_rect)
+        intro_rect.center = self.rect.w // 2, self.rect.h // 2
+        self.image.blit(string_rendered, intro_rect)
 
     def update(self, *args):
         if args and isinstance(args[0], pg.event.EventType):
             event = args[0]
             if event.type == pg.MOUSEBUTTONUP and event.button == pg.BUTTON_LEFT:
-                self.func()
+                if self.rect.collidepoint(pg.mouse.get_pos()):
+                    self.func()
+
+
+class Menu(pg.Surface):
+    def __init__(self):
+        super().__init__(SIZE)
+        self.buttons_group = pg.sprite.Group()
+        Button('Новая игра', self.start_new_game, self.buttons_group, pos=(0, 0))
+        Button('Продолжить', self.continue_a_game, self.buttons_group, pos=(WIDTH // 2, 0))
+        self.finished = False
+
+        self.buttons_group.draw(self)
+        self.run()
+
+    def continue_a_game(self):
+        global level
+        dictionary = read_saved_data()
+        if 'level' not in dictionary:
+            pass
+        else:
+            level = Level(int(dictionary['level']))
+            self.finished = True
+
+    def start_new_game(self):
+        global level
+        level = Level(1)
+        self.finished = True
+
+    def run(self):
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    terminate()
+                elif event.type == pg.MOUSEBUTTONUP:
+                    self.buttons_group.update(event)
+
+            if self.finished:
+                return
+
+            screen.blit(self, (0, 0))
+            pg.display.flip()
+            clock.tick(FPS)
+
+
+class Pause(pg.Surface):
+    def __init__(self):
+        super().__init__(SIZE)
+        self.buttons_group = pg.sprite.Group()
+        Button('Меню', self.open_menu, self.buttons_group, pos=(0, 0))
+        Button('Продолжить', self.back_to_game, self.buttons_group, pos=(WIDTH // 2, 0))
+        self.finished = False
+
+        self.buttons_group.draw(self)
+        self.run()
+
+    def open_menu(self):
+        self.finished = True
+        Menu()
+
+    def back_to_game(self):
+        self.finished = True
+
+    def run(self):
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    terminate()
+                elif event.type == pg.MOUSEBUTTONUP:
+                    self.buttons_group.update(event)
+
+            if self.finished:
+                return
+
+            screen.blit(self, (0, 0))
+            pg.display.flip()
+            clock.tick(FPS)
 
 
 class LightedSprite(pg.sprite.Sprite):
@@ -332,10 +457,12 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
     def death(self):
         """Игрок умирает"""
         print('\rPlayer death')
-        start_a_game()
+        death_screen()
+        Menu()
 
     def win(self):
-        pass
+        win_screen()
+        self.level.next_level()
 
 
 class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
@@ -490,7 +617,7 @@ class Exit(LightedSprite):
         self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
 
     def use(self, player):
-        self.level.win()
+        player.win()
 
 
 class Level(pg.Surface):
@@ -666,12 +793,15 @@ class Level(pg.Surface):
         else:
             return None
 
-    def win(self):
+    def next_level(self):
+        user_data = read_saved_data()
+        user_data['level'] = self.level_num + 1
+        save_data(user_data)
         self.__init__(self.level_num + 1)
 
 
 level = None
-start_a_game()
+Menu()
 
 while running:
     for event in pg.event.get():
@@ -679,6 +809,9 @@ while running:
             terminate()
         elif event.type == pg.MOUSEBUTTONDOWN:
             pass
+        elif event.type == pg.KEYDOWN:
+            if event.key == pg.K_ESCAPE:
+                Pause()
         elif event.type == pg.KEYUP:
             level.update(event)
     level.update()
