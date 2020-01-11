@@ -114,12 +114,20 @@ def death_screen() -> None:
     some_screen(text, 'fon.png')
 
 
-def win_screen() -> None:
-    text = ["Вы Выиграли!",
-            "",
-            "В следующий раз будьте аккуратны.",
-            "",
-            "Нажмите любую клавишу что бы продолжить."]
+def win_screen(level_num: Union[int, str]) -> None:
+    if isinstance(level_num, int):
+        text = [f"Вы прошли уровень {level_num}!",
+                "",
+                "В следующий раз будьте аккуратны.",
+                "",
+                "Нажмите любую клавишу что бы продолжить."]
+    elif level_num == 'all game':
+        text = ["Вы прошли всю игру!",
+                "Поздравлям!",
+                "Спасибо, что были с нами.",
+                "Нажмите любую клавишу что бы продолжить."]
+    else:
+        text = level_num.split('\n')
 
     some_screen(text, 'fon.png')
 
@@ -265,7 +273,7 @@ class Pause(pg.Surface):
 class LightedSprite(pg.sprite.Sprite):
     frame_from_last_light_update: int
     monochrome: bool  # Определяет как будет накладываться затемнение
-    real_image: Optional[pg.image]  # Картинка без затемнения
+    real_image: Optional[pg.Surface]  # Картинка без затемнения
     _image: Optional[pg.Surface]
     _light: int
 
@@ -414,7 +422,7 @@ class Tile(LightedSprite):
 
 
 class Player(LightedSprite, AnimationSprite, MoveableSprite):
-    inventory: Dict[str, List[int, int]]
+    inventory: Dict[str, List[int]]
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
 
     def __init__(self, pos_x, pos_y, level):
@@ -490,8 +498,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
 
     def win(self):
         """Игрок прошёл уровень"""
-        win_screen()
-        self.level.next_level()
+        self.level.win()
 
 
 class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
@@ -658,12 +665,12 @@ class Torch(LightedSprite, AnimationSprite):
         self.frame_from_last_participle_create = 0
 
         self.light_power = 255
-        self.level.add_light(self.rect.center, self.light_power)
+        self.level.add_light((self.rect.center, self.light_power))
         self.level.relight_it(self)
 
     def use(self, player):
         if player.add_torch():
-            self.level.remove_light(self.rect.center, self.light_power)
+            self.level.remove_light((self.rect.center, self.light_power))
             self.kill()
 
     def update(self, *args):
@@ -899,6 +906,14 @@ class Level(pg.Surface):
             return self.tiles[y][x]
         else:
             return None
+
+    def win(self):
+        if os.path.isfile(os.path.join('levels', f'l{self.level_num + 1}.txt')):
+            win_screen(self.level_num)
+            self.next_level()
+        else:
+            win_screen('all game')
+            Menu()
 
     def next_level(self) -> None:
         user_data = read_saved_data()
