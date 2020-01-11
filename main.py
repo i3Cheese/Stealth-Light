@@ -3,10 +3,11 @@ import sys
 from math import ceil, sqrt, pi, cos, sin
 import random
 from typing import Tuple, Set, List, Union, Optional, Dict, NoReturn
-
-import pygame as pg
+from pygame.rect import RectType
 
 # инициализация pygame
+import pygame as pg
+
 FPS = 30
 pg.init()
 SIZE = WIDTH, HEIGHT = 600, 600
@@ -22,8 +23,9 @@ Point = Tuple[float, float]
 IntPoint = Tuple[int, int]
 UserData = Dict[str, str]
 LightSource = Tuple[IntPoint, int]
+Color = Union[Tuple[int, int, int], Tuple[int, int, int, int], pg.Color]
 
-FONT = pg.font.Font(None, 30)
+FONT = pg.font.Font(None, 35)
 
 SAVE_FILE = 'stealth_light.save'
 ENCODING = 'utf-8'
@@ -71,18 +73,21 @@ def terminate() -> NoReturn:
     sys.exit()
 
 
-def some_screen(text: List[str], image: str) -> None:
+def some_screen(text: List[str], image: str, color: Color = (0, 0, 0)) -> None:
+    """Печатает text цвета color на фоне image и выводит на экран до нажатия на любую кнопку."""
+    surf = pg.Surface(SIZE)
+
     fon = pg.transform.scale(load_image(image), (WIDTH, HEIGHT))
-    screen.blit(fon, (0, 0))
-    text_coord = 50
+    surf.blit(fon, (0, 0))
+    text_coord = 200
     for line in text:
-        string_rendered = FONT.render(line, 1, pg.Color('black'))
+        string_rendered = FONT.render(line, 1, color)
         intro_rect = string_rendered.get_rect()
         text_coord += 10
         intro_rect.top = text_coord
         intro_rect.x = 10
         text_coord += intro_rect.height
-        screen.blit(string_rendered, intro_rect)
+        surf.blit(string_rendered, intro_rect)
 
     finished = False
 
@@ -100,46 +105,63 @@ def some_screen(text: List[str], image: str) -> None:
         if finished:
             break
 
+        screen.blit(surf, (0, 0))
+        mouse.update()
+        mouse.draw(screen)
+
         pg.display.flip()
         clock.tick(FPS)
 
 
 def death_screen() -> None:
+    """Выводит на экран информацию о смерти."""
+
     text = ["Вы умерли!",
-            "",
             "В следующий раз будьте аккуратны",
+            "",
             "",
             "Нажмите любую клавишу что бы продолжить"]
 
-    some_screen(text, 'fon.png')
+    some_screen(text, 'death_fon.png', (0, 0, 0))
 
 
 def win_screen(level_num: Union[int, str]) -> None:
+    """Выводит на экран информацию о прохождении уровня или игры или произвольный текст."""
+
     if isinstance(level_num, int):
         text = [f"Вы прошли уровень {level_num}!",
-                "",
                 "В следующий раз будьте аккуратны.",
                 "",
                 "Нажмите любую клавишу что бы продолжить."]
+        color = (210, 255, 255)
+        img = 'win_fon.png'
     elif level_num == 'all game':
         text = ["Вы прошли всю игру!",
                 "Поздравлям!",
                 "Спасибо, что были с нами.",
+                "",
                 "Нажмите любую клавишу что бы продолжить."]
+        color = (0, 0, 0)
+        img = 'all_game_win_fon.png'
     else:
         text = level_num.split('\n')
+        color = (255, 255, 255)
+        img = 'win_fon.png'
 
-    some_screen(text, 'fon.png')
+    some_screen(text, img, color)
 
 
 # OTHER TOOLS
 
 
 def sign(a: float) -> int:
+    """Возвращает знак числа"""
     return -1 if a < 0 else 1
 
 
 def read_saved_data() -> UserData:
+    """Читает сохранёную информацию."""
+
     dictionary = dict()
     if os.path.isfile(SAVE_FILE):
         with open(SAVE_FILE, 'r', encoding=ENCODING) as f:
@@ -153,6 +175,7 @@ def read_saved_data() -> UserData:
 
 
 def save_data(dictionary: UserData) -> None:
+    """Сохранение данных."""
     with open(SAVE_FILE, 'w', encoding=ENCODING) as f:
         for key, data in dictionary.items():
             f.write(f'{key}={data}')
@@ -162,6 +185,10 @@ def save_data(dictionary: UserData) -> None:
 
 
 class Button(pg.sprite.Sprite):
+    """Создан для различных меню. Выполняет переданную функцию при нажатии."""
+    img = load_image('button.png')
+    default_rect = img.get_rect()
+
     def __init__(self, text: str, func, *groups,
                  pos: Optional[IntPoint] = None,
                  center_pos: Optional[IntPoint] = None):
@@ -169,7 +196,7 @@ class Button(pg.sprite.Sprite):
 
         self.func = func
 
-        self.image = load_image('button.png')
+        self.image = self.img.copy()
         self.rect = self.image.get_rect()
         if pos:
             self.rect.topleft = pos
@@ -191,15 +218,46 @@ class Button(pg.sprite.Sprite):
 
 
 class Menu(pg.Surface):
-    """Меню начала игры. Полностью перехватывает управление. Изменяет level"""
-
+    """Произвольное меню с кнопками. Полностью перехватывает управление."""
     def __init__(self):
         super().__init__(SIZE)
+        self.buttons_group = pg.sprite.Group()
+        self.finished = False  # Если истина - завершаем внутриний цикл.
+
+    def run(self):
+        """Обрабатываем поступающие евенты."""
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    terminate()
+                elif event.type == pg.MOUSEBUTTONUP:
+                    self.buttons_group.update(event)
+
+            if self.finished:
+                break
+
+            screen.blit(self, (0, 0))
+            mouse.update()
+            mouse.draw(screen)
+
+            pg.display.flip()
+            clock.tick(FPS)
+
+
+class MainMenu(Menu):
+    """Меню начала игры. Изменяет level"""
+
+    def __init__(self):
+        super().__init__()
+
+        self.blit(pg.transform.scale(load_image("menu_fon.png"), SIZE), (0, 0))
 
         # создаём кнопки
-        self.buttons_group = pg.sprite.Group()
-        Button('Новая игра', self.start_new_game, self.buttons_group, pos=(0, 0))
-        Button('Продолжить', self.continue_a_game, self.buttons_group, pos=(WIDTH // 2, 0))
+        Button('Новая игра', self.start_new_game, self.buttons_group,
+               pos=(0, HEIGHT - Button.default_rect.height))
+        Button('Продолжить', self.continue_a_game, self.buttons_group,
+               pos=(WIDTH // 2, HEIGHT - Button.default_rect.height))
+
         self.buttons_group.draw(self)
 
         self.finished = False  # Если тру - завершаем внутриний цикл.
@@ -219,58 +277,31 @@ class Menu(pg.Surface):
         level = Level(1)
         self.finished = True
 
-    def run(self):
-        """Обрабатываем поступающие евенты."""
-        while True:
-            for event in pg.event.get():
-                if event.type == pg.QUIT:
-                    terminate()
-                elif event.type == pg.MOUSEBUTTONUP:
-                    self.buttons_group.update(event)
 
-            if self.finished:
-                break
-
-            screen.blit(self, (0, 0))
-            pg.display.flip()
-            clock.tick(FPS)
-
-
-class Pause(pg.Surface):
+class Pause(Menu):
+    """Окно игровой паузы"""
     def __init__(self):
-        super().__init__(SIZE)
-        self.buttons_group = pg.sprite.Group()
+        super().__init__()
+
+        self.blit(pg.transform.scale(load_image("pause_fon.png"), SIZE), (0, 0))
+
+        # Создаём кнопки
         Button('Меню', self.open_menu, self.buttons_group, pos=(0, 0))
         Button('Продолжить', self.back_to_game, self.buttons_group, pos=(WIDTH // 2, 0))
-        self.finished = False
-
         self.buttons_group.draw(self)
+
         self.run()
 
     def open_menu(self):
         self.finished = True
-        Menu()
+        MainMenu()
 
     def back_to_game(self):
         self.finished = True
 
-    def run(self):
-        while True:
-            for event in pg.event.get():
-                if event.type == pg.QUIT:
-                    terminate()
-                elif event.type == pg.MOUSEBUTTONUP:
-                    self.buttons_group.update(event)
-
-            if self.finished:
-                return
-
-            screen.blit(self, (0, 0))
-            pg.display.flip()
-            clock.tick(FPS)
-
 
 class LightedSprite(pg.sprite.Sprite):
+    """Класс для поддержки освёщености спрайтов."""
     frame_from_last_light_update: int
     monochrome: bool  # Определяет как будет накладываться затемнение
     real_image: Optional[pg.Surface]  # Картинка без затемнения
@@ -337,6 +368,7 @@ class LightedSprite(pg.sprite.Sprite):
 
 
 class AnimationSprite:
+    """Класс для обеспечения анимации спрайтов."""
     def __init__(self, update_image_speed):
         self.update_image_speed = update_image_speed
         self._stay = True if isinstance(self, MoveableSprite) else False
@@ -365,10 +397,13 @@ class AnimationSprite:
 
 
 class MoveableSprite:
+    """Класс для обеспечения передвежения спрайтов с некоторой скоростью."""
+    real_pos: List[float]
+    speed: float
+
     def __init__(self, pos: Point, speed: float):
         self.speed = speed
         self.real_pos = list(pos)
-        self.frame_from_last_light_update = random.randrange(0, UPDATE_FRAME)
 
     def move(self, dx: float, dy: float) -> None:
         """Передвигает спрайт на расстояние self.speed по лучу
@@ -435,17 +470,136 @@ class Tile(LightedSprite):
                             level.tile_width, level.tile_height, )
 
 
+class Participle(LightedSprite):
+    # Создаём различные изобржания частиц
+    fire = []
+    for scale in [1, 2, 3]:
+        for color in [(255, 0, 0), (253, 240, 69), (0, 0, 0)]:
+            __img = pg.Surface((scale, scale), pg.SRCALPHA)
+            __img.fill(color)
+            fire.append(__img)
+
+    def __init__(self, pos, level, light, live_frames=30):
+        super().__init__(level.all_sprites,
+                         level.participles_group,
+                         level=level,
+                         monochrome=True)
+
+        self.image = random.choice(self.fire)
+        self.rect = self.image.get_rect()
+        self.light = light
+
+        # у каждой частицы своя скорость — это вектор
+        self.velocity = [random.random() - 1 / 2, random.random() - 1 / 2]
+        # и свои координаты
+        self.rect.topleft = pos
+        self.real_pos = list(pos)
+
+        self.live_frames = live_frames  # Сколько кадров будет существовать частица
+
+    def update(self, *args):
+        if args:
+            return
+
+        # перемещаем частицу
+        self.real_pos[0] += self.velocity[0]
+        self.real_pos[1] += self.velocity[1]
+        self.rect.x = round(self.real_pos[0])
+        self.rect.y = round(self.real_pos[1])
+
+        # убиваем частицу, если она прожила своё время
+        self.live_frames -= 1
+        if self.live_frames <= 0:
+            self.kill()
+
+
+class Torch(LightedSprite, AnimationSprite):
+    default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
+
+    def __init__(self, pos_of_center: IntPoint, level):
+        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
+                         monochrome=False,
+                         level=level)
+
+        AnimationSprite.__init__(self, update_image_speed=10)
+
+        self.rect = self.default_rect.copy()
+        self.center = pos_of_center
+
+        self.frame_from_last_participle_create = random.randrange(0, UPDATE_FRAME)
+
+        self.light_power = 255
+        self.level.add_light((self.rect.center, self.light_power))
+        self.level.relight_it(self)
+
+    def use(self, player):
+        if player.add_torch():  # Если игрок смог взять факел - убираем его из игры.
+            self.level.remove_light((self.rect.center, self.light_power))
+            self.kill()
+
+    def update(self, *args):
+        # изменяем кадр
+        if args:  # Пропускаем евенты нажатия на клавиш и т.п.
+            pass
+        else:
+            # Находится ли спрайт в зоне видимоти
+            if not self.rect.colliderect(self.level.visible_area):
+                return
+
+            AnimationSprite.update(self)  # Обновляем анимацию
+
+            # Создаём частицы, искры и пепел.
+            self.frame_from_last_participle_create += 1
+            if self.frame_from_last_participle_create >= UPDATE_FRAME:
+                self.frame_from_last_participle_create = 0
+                for i in range(2):
+                    Participle((self.rect.centerx, self.rect.centery - 10), self.level, self.light)
+        super().update(*args)
+
+
+class Exit(LightedSprite):
+    """Выход с уровня."""
+    default_image = load_image('exit.png')
+
+    def __init__(self, pos_x: int, pos_y: int, level):
+        # Инициализируем спрайт и освещение
+        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
+                         monochrome=False,
+                         level=level)
+        # Задаём координаты
+        self.image = self.default_image
+        self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
+
+    def use(self, player):
+        player.win()
+
+
+class Border(pg.sprite.Sprite):
+    """Невидимая преграда."""
+    def __init__(self, rect: pg.Rect, level):
+        super().__init__(level.all_sprites, level.collided_sprites)
+        self.image = pg.Surface(rect.size, pg.SRCALPHA)
+        self.image.fill((0, 0, 0, 0))  # Делаем невидимым
+        self.rect = rect
+        self.mask = pg.Mask(rect.size, True)
+
+
 class Player(LightedSprite, AnimationSprite, MoveableSprite):
     inventory: Dict[str, List[int]]
-    default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
+    inventory_icon_size = (20, 20)
+    inventory_icons: Dict[str, pg.Surface] = {
+        'torch': pg.transform.scale(load_image('torch.png'), inventory_icon_size)}
+
+    default_rect, frames = cut_sheet(load_image('player_sheet.png'), 4, 1)
 
     def __init__(self, pos_x, pos_y, level):
         # Инициализируем спрайт и освещение
         super().__init__(level.all_sprites, level.player_group,
                          level=level,
                          monochrome=False)
-        self.rect = Player.default_rect.copy().move(level.tile_width * pos_x,
-                                                    level.tile_height * pos_y)
+        self.rect = Player.default_rect.copy()
+        self.rect.bottom = (pos_y + 1) * self.level.tile_height
+        self.rect.centerx = int((pos_x + .5) * self.level.tile_width)
 
         AnimationSprite.__init__(self,  # иницаилизируем анимацию
                                  update_image_speed=10)
@@ -463,6 +617,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
             if isinstance(args[0], pg.event.EventType):
                 event = args[0]
                 if event.type == pg.KEYUP and event.key == pg.K_e:
+                    # пытаемся использовать что-либо или поставить факел.
                     use_that = pg.sprite.spritecollideany(self, level.useable_objects_group)
                     if use_that is None:
                         self.place_torch()
@@ -470,6 +625,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
                         use_that.use(self)
 
         else:
+            # Определяем направление движения
             dx = 0
             dy = 0
             if pg.key.get_pressed()[pg.K_w]:
@@ -507,16 +663,31 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
     def death(self):
         """Игрок умирает"""
         death_screen()
-        Menu()
+        MainMenu()
 
     def win(self):
         """Игрок прошёл уровень"""
         self.level.win()
 
+    def draw_inventory(self) -> pg.Surface:
+        """Возвращает прозрачный прямоугольник с информацией о содержании инвентаря."""
+        one_line_height = self.inventory_icon_size[1] + 5
+        surf = pg.Surface((80, len(self.inventory) * one_line_height),
+                          pg.SRCALPHA, self.level)
+        surf.set_alpha(0)
+
+        for i, (key, value) in enumerate(self.inventory.items()):
+            surf.blit(self.inventory_icons[key], (0, i * one_line_height))
+            line = f'{value[0]} / {value[1]}'
+            line_rendered = FONT.render(line, True, (180, 180, 180))
+            surf.blit(line_rendered, (self.inventory_icon_size[0], i * one_line_height))
+
+        return surf
+
 
 class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
     default_rect, frames = cut_sheet(load_image('enemy_sheet.png'), 4, 1)
-    player_priority = 10000
+    player_priority = 100000
 
     def __init__(self, pos_x: int, pos_y: int, level):
         # Инициализируем спрайт и освещение
@@ -541,10 +712,14 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
 
         self.level.relight_it(self)
 
-    def update(self, *args):
+    def update(self, *args) -> None:
         if args:
             pass
         else:
+            # Находится ли спрайт в зоне видимоти
+            if not self.rect.colliderect(self.level.visible_area):
+                return
+
             self.frame_from_last_look += 1
             if self.frame_from_last_look >= UPDATE_FRAME:
                 self.frame_from_last_look = 0
@@ -623,117 +798,11 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         return target, target_priority
 
 
-class Participle(LightedSprite):
-    fire = []
-    for scale in [1, 2, 3]:
-        for color in [(255, 0, 0), (253, 240, 69), (0, 0, 0)]:
-            __img = pg.Surface((scale, scale), pg.SRCALPHA)
-            __img.fill(color)
-            fire.append(__img)
-
-    def __init__(self, pos, level, light, live_frames=30):
-        super().__init__(level.all_sprites,
-                         level.participles_group,
-                         level=level,
-                         monochrome=True)
-        self.image = random.choice(self.fire)
-        self.rect = self.image.get_rect()
-        self.light = light
-
-        # у каждой частицы своя скорость — это вектор
-        self.velocity = [random.random() - 1 / 2, random.random() - 1 / 2]
-        # и свои координаты
-        self.rect.topleft = pos
-        self.real_pos = list(pos)
-
-        self.live_frames = live_frames
-
-    def update(self, *args):
-        if args:
-            return
-
-        # перемещаем частицу
-        self.real_pos[0] += self.velocity[0]
-        self.real_pos[1] += self.velocity[1]
-        self.rect.x = round(self.real_pos[0])
-        self.rect.y = round(self.real_pos[1])
-
-        # убиваем частицу, если она прожила своё время
-        self.live_frames -= 1
-        if self.live_frames <= 0:
-            self.kill()
-
-
-class Torch(LightedSprite, AnimationSprite):
-    default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
-
-    def __init__(self, pos_of_center: IntPoint, level):
-        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
-                         monochrome=False,
-                         level=level)
-
-        AnimationSprite.__init__(self, update_image_speed=10)
-        self.stay = False
-
-        self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
-                                                  pos_of_center[1] - self.default_rect.h // 2)
-
-        self.frame_from_last_participle_create = random.randrange(0, UPDATE_FRAME)
-
-        self.light_power = 255
-        self.level.add_light((self.rect.center, self.light_power))
-        self.level.relight_it(self)
-
-    def use(self, player):
-        if player.add_torch():
-            self.level.remove_light((self.rect.center, self.light_power))
-            self.kill()
-
-    def update(self, *args):
-        # изменяем кадр
-        if args:  # Пропускаем евенты нажатия на клавиш и т.п.
-            return
-
-        AnimationSprite.update(self)
-
-        # Создаём частицы, искры и пепел.
-        self.frame_from_last_participle_create += 1
-        if self.frame_from_last_participle_create >= UPDATE_FRAME:
-            self.frame_from_last_participle_create = 0
-            for i in range(2):
-                Participle((self.rect.centerx, self.rect.centery - 10), self.level, self.light)
-        super().update(*args)
-
-
-class Exit(LightedSprite):
-    default_image = load_image('exit.png')
-
-    def __init__(self, pos_x: int, pos_y: int, level):
-        # Инициализируем спрайт и освещение
-        super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
-                         monochrome=False,
-                         level=level)
-        # Задаём координаты
-        self.image = self.default_image
-        self.rect = self.image.get_rect().move(level.tile_width * pos_x, level.tile_height * pos_y)
-
-    def use(self, player):
-        player.win()
-
-
-class Border(pg.sprite.Sprite):
-    def __init__(self, rect: pg.Rect, level):
-        super().__init__(level.all_sprites, level.collided_sprites)
-        self.image = pg.Surface(rect.size, pg.SRCALPHA)
-        self.image.fill((0, 0, 0, 0))  # Делаем невидимым
-        self.rect = rect
-        self.mask = pg.Mask(rect.size, True)
-
-
 class Level(pg.Surface):
     level_num: int
     width: int
     height: int
+    visible_area: RectType
     rows: int
     cols: int
     player: Optional[Player]
@@ -763,6 +832,7 @@ class Level(pg.Surface):
         # Заполняются методом generate_level
         self.player, self.cols, self.rows = None, 0, 0
         self.width, self.height = 0, 0
+        self.visible_area = pg.Rect(0, 0, 0, 0)
         self.tiles = []
         self.generate_level(self.load_level(level_num))
 
@@ -809,6 +879,7 @@ class Level(pg.Surface):
                 self.tiles[-1].append(tile)
 
         self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
+        self.visible_area.size = self.width, self.height
 
         Border(pg.Rect(0, -1, self.width, 1), self)  # Верхняя граница
         Border(pg.Rect(0, self.height, self.width, 1), self)  # Нижняя
@@ -834,13 +905,17 @@ class Level(pg.Surface):
 
         # вычисляем координаты прямоугольника, который будем рисовать
         target = self.player.rect  # фокус на игроке
-        x = max(0, min(self.width - rect.width, target.x + target.width // 2 - rect.width // 2))
-        y = max(0, min(self.height - rect.height, target.y + target.height // 2 - rect.height // 2))
+        self.visible_area = rect.copy()
+        self.visible_area.x = max(0, min(self.width - rect.width,
+                                         target.x + target.width // 2 - rect.width // 2))
+        self.visible_area.y = max(0, min(self.height - rect.height,
+                                         target.y + target.height // 2 - rect.height // 2))
 
-        screen.blit(self, rect, rect.copy().move(x, y))
+        screen.blit(self, rect, self.visible_area)
+        screen.blit(self.player.draw_inventory(), rect)
 
     def count_light_between(self, light_source: LightSource, target: LightedSprite) -> None:
-        """Освещает target"""
+        """Освещает target относительно light_source"""
         pos, light_power = light_source
 
         ray_step = 5
@@ -940,23 +1015,46 @@ class Level(pg.Surface):
             return None
 
     def win(self):
+        """Выводим сообщение о прохождения уровня и запускаем следующий если он существует."""
         if os.path.isfile(os.path.join('levels', f'l{self.level_num + 1}.txt')):
             win_screen(self.level_num)
             self.next_level()
         else:
             win_screen('all game')
-            Menu()
+            MainMenu()
 
     def next_level(self) -> None:
+        """Сохраняем информацию о прохождении уровня и запускаем следующий"""
         user_data = read_saved_data()
         user_data['level'] = str(self.level_num + 1)
         save_data(user_data)
         self.__init__(self.level_num + 1)
 
 
-level = None
-Menu()
+class Cursor(pg.sprite.Sprite):
+    """Класс предназначеный для замены стандартного курсора на красивый"""
+    pg.mouse.set_visible(False)
+    image = load_image("arrow.png")
 
+    def __init__(self, group):
+        super().__init__(group)
+        self.rect = self.image.get_rect()
+
+    def update(self):
+        if pg.mouse.get_focused():
+            self.rect.topleft = pg.mouse.get_pos()
+        else:
+            self.rect.topleft = SIZE
+
+
+mouse = pg.sprite.Group()
+Cursor(mouse)
+
+level = None
+MainMenu()
+
+
+# Главный игровой цикл
 while running:
     for event in pg.event.get():
         if event.type == pg.QUIT:
@@ -970,8 +1068,14 @@ while running:
             level.update(event)
     level.update()
 
+    # Рисуем уровень
     screen.fill(pg.Color("black"))
     level.draw_on(screen, pg.Rect(0, 0, WIDTH, HEIGHT))
+
+    # Рисуем свой курсор
+    mouse.update()
+    mouse.draw(screen)
+
     pg.display.flip()
 
     clock.tick(FPS)
