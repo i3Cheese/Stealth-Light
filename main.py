@@ -15,7 +15,7 @@ clock = pg.time.Clock()
 running = True
 
 MINIMUM_LIGHT = 0
-UPDATE_FRAME = 15
+UPDATE_FRAME = 10
 GRAVITY = .2
 
 Point = Tuple[float, float]
@@ -279,7 +279,7 @@ class LightedSprite(pg.sprite.Sprite):
 
     def __init__(self, *groups, level, monochrome=True):
         super().__init__(*groups, level.light_sprites)
-        self.frame_from_last_light_update = 0
+        self.frame_from_last_light_update = random.randrange(0, UPDATE_FRAME)
         self.level = level
 
         self.monochrome = monochrome
@@ -337,24 +337,38 @@ class LightedSprite(pg.sprite.Sprite):
 
 
 class AnimationSprite:
-    def __init__(self, update_image_speed, cur_frame=0):
+    def __init__(self, update_image_speed):
         self.update_image_speed = update_image_speed
-        self.cur_frame = cur_frame
-        self.image = self.frames[self.cur_frame]
+        self._stay = True if isinstance(self, MoveableSprite) else False
+        self.cur_frame = random.randrange(0, update_image_speed * len(self.frames))
+        self.image = self.frames[self.cur_frame // self.update_image_speed]
         self.mask = pg.mask.from_surface(self.image)
 
     def update(self) -> None:
         """Обновляет текущий кадр"""
-        self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
-        self.image = self.frames[self.cur_frame // self.update_image_speed]
-        self.mask = pg.mask.from_surface(self.image)
+        if not self.stay:
+            self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
+            self.image = self.frames[self.cur_frame // self.update_image_speed]
+            self.mask = pg.mask.from_surface(self.image)
+
+    @property
+    def stay(self) -> bool:
+        return self._stay
+
+    @stay.setter
+    def stay(self, check: bool):
+        if check:
+            self.cur_frame = 0
+            self.image = self.frames[0]
+
+        self._stay = check
 
 
 class MoveableSprite:
     def __init__(self, pos: Point, speed: float):
         self.speed = speed
         self.real_pos = list(pos)
-        self.frame_from_last_light_update = 0
+        self.frame_from_last_light_update = random.randrange(0, UPDATE_FRAME)
 
     def move(self, dx: float, dy: float) -> None:
         """Передвигает спрайт на расстояние self.speed по лучу
@@ -434,8 +448,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
                                                     level.tile_height * pos_y)
 
         AnimationSprite.__init__(self,  # иницаилизируем анимацию
-                                 update_image_speed=10,
-                                 cur_frame=0)
+                                 update_image_speed=10)
         MoveableSprite.__init__(self,  # инициализируем двжение
                                 pos=self.rect.topleft,
                                 speed=5)
@@ -468,6 +481,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
             if pg.key.get_pressed()[pg.K_d]:
                 dx += self.speed
 
+            self.stay = not (dx or dy)
             MoveableSprite.move(self, dx, dy)
 
             # изменяем кадр
@@ -492,7 +506,6 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
 
     def death(self):
         """Игрок умирает"""
-        print('\rPlayer death')
         death_screen()
         Menu()
 
@@ -515,15 +528,14 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
                                                   level.tile_height * pos_y)
 
         AnimationSprite.__init__(self,  # иницаилизируем анимацию
-                                 update_image_speed=10,
-                                 cur_frame=0)
+                                 update_image_speed=10)
         MoveableSprite.__init__(self,  # инициализируем двжение
                                 pos=self.rect.topleft,
                                 speed=3)
 
         # инициализация зрения
         self.visual_range = 256
-        self.num_of_rays = 30
+        self.num_of_rays = 40
         self.target: Optional[Point] = None
         self.frame_from_last_look = 0
 
@@ -541,6 +553,9 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
             if self.target:
                 if MoveableSprite.move_to(self, self.target):
                     self.target = None
+                    self.stay = True
+                else:
+                    self.stay = False
 
             if pg.sprite.collide_mask(self, self.level.player):
                 self.level.player.death()
@@ -657,12 +672,13 @@ class Torch(LightedSprite, AnimationSprite):
                          monochrome=False,
                          level=level)
 
-        AnimationSprite.__init__(self, update_image_speed=10, cur_frame=0)
+        AnimationSprite.__init__(self, update_image_speed=10)
+        self.stay = False
 
         self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
                                                   pos_of_center[1] - self.default_rect.h // 2)
 
-        self.frame_from_last_participle_create = 0
+        self.frame_from_last_participle_create = random.randrange(0, UPDATE_FRAME)
 
         self.light_power = 255
         self.level.add_light((self.rect.center, self.light_power))
@@ -859,18 +875,24 @@ class Level(pg.Surface):
         else:
             self.light_sources.add((light_source[0], -light_source[1]))
 
-        self.count_light_for_source((light_source[0], -light_source[1]))
+        if running:
+            self.count_light_for_source((light_source[0], -light_source[1]))
 
     def relight_all(self) -> None:
         """Полностью перепросчитывает свет."""
-        for light_source in self.light_sources:
-            self.count_light_for_source(light_source)
+        if self.in_game:
+            for sprite in self.light_sprites:
+                sprite.light = MINIMUM_LIGHT
+
+            for light_source in self.light_sources:
+                self.count_light_for_source(light_source)
 
     def relight_it(self, sprite: LightedSprite) -> None:
         """Переосвещает данный спрайт"""
-        sprite.light = MINIMUM_LIGHT
-        for light_source in self.light_sources:
-            self.count_light_between(light_source, sprite)
+        if self.in_game:
+            sprite.light = MINIMUM_LIGHT
+            for light_source in self.light_sources:
+                self.count_light_between(light_source, sprite)
 
     def ray_tracing(self, target: LightedSprite, a: Point, b: Optional[Point] = None,
                     r: Optional[int] = None) -> bool:
