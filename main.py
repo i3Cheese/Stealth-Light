@@ -1,6 +1,7 @@
 import os
 import sys
 from math import ceil, sqrt, pi, cos, sin
+import random
 from typing import Tuple, Set, List, Union, Optional, Dict, NoReturn
 
 import pygame as pg
@@ -13,10 +14,12 @@ screen = pg.display.set_mode(SIZE)
 clock = pg.time.Clock()
 running = True
 
-MINIMUM_LIGHT = 50
+MINIMUM_LIGHT = 0
 UPDATE_FRAME = 15
+GRAVITY = .2
 
-Point = Union[Tuple[float, float]]
+Point = Tuple[float, float]
+IntPoint = Tuple[int, int]
 UserData = Dict[str, str]
 
 FONT = pg.font.Font(None, 30)
@@ -55,7 +58,7 @@ def cut_sheet(sheet: pg.Surface, columns: int, rows: int) -> Tuple[pg.Rect, List
     return rect, frames
 
 
-def find_center(s: pg.sprite.Sprite):
+def find_center(s: pg.sprite.Sprite) -> IntPoint:
     return s.rect.center
 
 
@@ -151,8 +154,8 @@ def save_data(dictionary: UserData) -> None:
 
 class Button(pg.sprite.Sprite):
     def __init__(self, text: str, func, *groups,
-                 pos: Optional[Point] = None,
-                 center_pos: Optional[Point] = None):
+                 pos: Optional[IntPoint] = None,
+                 center_pos: Optional[IntPoint] = None):
         super().__init__(*groups)
 
         self.func = func
@@ -165,27 +168,32 @@ class Button(pg.sprite.Sprite):
             self.rect.center = center_pos
 
         string_rendered = FONT.render(text, 1, pg.Color('black'))
-        intro_rect = string_rendered.get_rect()
-        intro_rect.center = self.rect.w // 2, self.rect.h // 2
-        self.image.blit(string_rendered, intro_rect)
+        text_rect = string_rendered.get_rect()
+        text_rect.center = self.rect.w // 2, self.rect.h // 2
+        self.image.blit(string_rendered, text_rect)
 
     def update(self, *args):
         if args and isinstance(args[0], pg.event.EventType):
             event = args[0]
+            # вызываем функцию при нажатии
             if event.type == pg.MOUSEBUTTONUP and event.button == pg.BUTTON_LEFT:
                 if self.rect.collidepoint(pg.mouse.get_pos()):
                     self.func()
 
 
 class Menu(pg.Surface):
+    """Меню начала игры. Полностью перехватывает управление. Изменяет level"""
+
     def __init__(self):
         super().__init__(SIZE)
+
+        # создаём кнопки
         self.buttons_group = pg.sprite.Group()
         Button('Новая игра', self.start_new_game, self.buttons_group, pos=(0, 0))
         Button('Продолжить', self.continue_a_game, self.buttons_group, pos=(WIDTH // 2, 0))
-        self.finished = False
-
         self.buttons_group.draw(self)
+
+        self.finished = False  # Если тру - завершаем внутриний цикл.
         self.run()
 
     def continue_a_game(self):
@@ -203,6 +211,7 @@ class Menu(pg.Surface):
         self.finished = True
 
     def run(self):
+        """Обрабатываем поступающие евенты."""
         while True:
             for event in pg.event.get():
                 if event.type == pg.QUIT:
@@ -211,7 +220,7 @@ class Menu(pg.Surface):
                     self.buttons_group.update(event)
 
             if self.finished:
-                return
+                break
 
             screen.blit(self, (0, 0))
             pg.display.flip()
@@ -254,7 +263,7 @@ class Pause(pg.Surface):
 
 class LightedSprite(pg.sprite.Sprite):
     def __init__(self, *groups, level, monochrome=True):
-        super().__init__(*groups)
+        super().__init__(*groups, level.light_sprites)
         self.frame_from_last_light_update = 0
         self.level = level
 
@@ -410,7 +419,8 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
                                 pos=self.rect.topleft,
                                 speed=5)
 
-        self.inventory = {"torch": 3}
+        # Значения - текущее кол-во и вместимость
+        self.inventory: Dict[str, List[int, int]] = {"torch": [3, 3]}
 
         self.level.relight_it(self)
 
@@ -444,15 +454,20 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
 
         super().update(*args)
 
-    def add_torch(self):
+    def add_torch(self) -> bool:
         """Добавляет факел в инвентарь"""
-        self.inventory["torch"] += 1
+        torchs = self.inventory["torch"]
+        if torchs[0] < torchs[1]:
+            torchs[0] += 1
+            return True
+        else:
+            return False
 
     def place_torch(self):
-        """Ставит факел на карту из инвенторя"""
-        if self.inventory["torch"]:
+        """Ставит факел на карту из инвентаря"""
+        if self.inventory["torch"][0]:
             Torch(find_center(self), self.level)
-            self.inventory["torch"] -= 1
+            self.inventory["torch"][0] -= 1
 
     def death(self):
         """Игрок умирает"""
@@ -461,6 +476,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
         Menu()
 
     def win(self):
+        """Игрок прошёл уровень"""
         win_screen()
         self.level.next_level()
 
@@ -572,10 +588,51 @@ class Enemy(LightedSprite, AnimationSprite, MoveableSprite):
         return target, target_priority
 
 
+class Participle(LightedSprite):
+    fire = []
+    for scale in [1, 2, 3]:
+        for color in [(255, 0, 0), (253, 240, 69), (0, 0, 0)]:
+            __img = pg.Surface((scale, scale), pg.SRCALPHA)
+            __img.fill(color)
+            fire.append(__img)
+
+    def __init__(self, pos, level, light, live_frames=30):
+        super().__init__(level.all_sprites,
+                         level.participles_group,
+                         level=level,
+                         monochrome=True)
+        self.image = random.choice(self.fire)
+        self.rect = self.image.get_rect()
+        self.light = light
+
+        # у каждой частицы своя скорость — это вектор
+        self.velocity = [random.random() - 1 / 2, random.random() - 1/2]
+        # и свои координаты
+        self.rect.topleft = pos
+        self.real_pos = list(pos)
+
+        self.live_frames = live_frames
+
+    def update(self, *args):
+        if args:
+            return
+
+        # перемещаем частицу
+        self.real_pos[0] += self.velocity[0]
+        self.real_pos[1] += self.velocity[1]
+        self.rect.x = round(self.real_pos[0])
+        self.rect.y = round(self.real_pos[1])
+
+        # убиваем частицу, если она прожила своё время
+        self.live_frames -= 1
+        if self.live_frames <= 0:
+            self.kill()
+
+
 class Torch(LightedSprite, AnimationSprite):
     default_rect, frames = cut_sheet(load_image("torch_sheet.png"), 4, 1)
 
-    def __init__(self, pos_of_center: Tuple[int, int], level):
+    def __init__(self, pos_of_center: IntPoint, level):
         super().__init__(level.all_sprites, level.objects_group, level.useable_objects_group,
                          monochrome=False,
                          level=level)
@@ -585,22 +642,30 @@ class Torch(LightedSprite, AnimationSprite):
         self.rect = self.default_rect.copy().move(pos_of_center[0] - self.default_rect.w // 2,
                                                   pos_of_center[1] - self.default_rect.h // 2)
 
+        self.frame_from_last_participle_create = 0
+
         self.light_power = 255
         self.level.add_light(self.rect.center, self.light_power)
         self.level.relight_it(self)
 
     def use(self, player):
-        self.level.remove_light(self.rect.center, self.light_power)
-        player.add_torch()
-        self.kill()
+        if player.add_torch():
+            self.level.remove_light(self.rect.center, self.light_power)
+            self.kill()
 
     def update(self, *args):
         # изменяем кадр
         if args:  # Пропускаем евенты нажатия на клавиш и т.п.
-            pass
-        else:
-            AnimationSprite.update(self)
+            return
 
+        AnimationSprite.update(self)
+
+        # Создаём частицы, искры и пепел.
+        self.frame_from_last_participle_create += 1
+        if self.frame_from_last_participle_create >= UPDATE_FRAME:
+            self.frame_from_last_participle_create = 0
+            for i in range(2):
+                Participle((self.rect.centerx, self.rect.centery - 10), self.level, self.light)
         super().update(*args)
 
 
@@ -620,14 +685,23 @@ class Exit(LightedSprite):
         player.win()
 
 
+class Border(pg.sprite.Sprite):
+    def __init__(self, rect: pg.Rect, level):
+        super().__init__(level.all_sprites, level.collided_sprites)
+        self.image = pg.Surface(rect.size, pg.SRCALPHA)
+        self.image.fill((0, 0, 0, 0))  # Делаем невидимым
+        self.rect = rect
+        self.mask = pg.Mask(rect.size, True)
+
+
 class Level(pg.Surface):
     width: int
     height: int
     rows: int
     cols: int
-    player: Player
+    player: Optional[Player]
     tiles: List[List[Tile]]
-    light_sources: Set[Tuple[Tuple[int, int], int]]
+    light_sources: Set[Tuple[IntPoint, int]]
 
     tile_width = tile_height = 64
 
@@ -636,19 +710,23 @@ class Level(pg.Surface):
 
         # группы спрайтов
         self.all_sprites = pg.sprite.Group()
+        self.light_sprites = pg.sprite.Group()
         self.collided_sprites = pg.sprite.Group()
         self.tiles_group = pg.sprite.Group()
         self.player_group = pg.sprite.Group()
         self.enemies_group = pg.sprite.Group()
         self.objects_group = pg.sprite.Group()
         self.useable_objects_group = pg.sprite.Group()
+        self.participles_group = pg.sprite.Group()
+
         self.light_sources = set()
 
-        self.player, self.cols, self.rows = None, None, None
+        # Заполняются методом generate_level
+        self.player, self.cols, self.rows = None, 0, 0
+        self.width, self.height = 0, 0
         self.tiles = []
         self.generate_level(self.load_level(level_num))
 
-        self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
         super().__init__((self.width, self.height))
 
     @staticmethod
@@ -688,6 +766,13 @@ class Level(pg.Surface):
                     tile = Tile('empty', False, x, y, self)
                     Exit(x, y, self)
                 self.tiles[-1].append(tile)
+
+        self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
+
+        Border(pg.Rect(0, -1, self.width, 1), self)  # Верхняя граница
+        Border(pg.Rect(0, self.height, self.width, 1), self)  # Нижняя
+        Border(pg.Rect(-1, 0, 1, self.height), self)  # Левая
+        Border(pg.Rect(self.width, 0, 1, self.height), self)  # Правая
         self.player = Player(*player_pos, self)
 
     def update(self, *args):
@@ -703,6 +788,7 @@ class Level(pg.Surface):
         self.objects_group.draw(self)
         self.enemies_group.draw(self)
         self.player_group.draw(self)
+        self.participles_group.draw(self)
 
         # вычисляем координаты прямоугольника, который будем рисовать
         target = self.player.rect  # фокус на игроке
@@ -730,7 +816,7 @@ class Level(pg.Surface):
                 break
 
     def count_light_for_source(self, pos, light_power):
-        for sprite in self.all_sprites:
+        for sprite in self.light_sprites:
             self.count_light_between(pos, light_power, sprite)
 
     def add_light(self, pos, light_power):
