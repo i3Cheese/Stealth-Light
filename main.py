@@ -21,6 +21,7 @@ GRAVITY = .2
 Point = Tuple[float, float]
 IntPoint = Tuple[int, int]
 UserData = Dict[str, str]
+LightSource = Tuple[IntPoint, int]
 
 FONT = pg.font.Font(None, 30)
 
@@ -262,6 +263,12 @@ class Pause(pg.Surface):
 
 
 class LightedSprite(pg.sprite.Sprite):
+    frame_from_last_light_update: int
+    monochrome: bool  # Определяет как будет накладываться затемнение
+    real_image: Optional[pg.image]  # Картинка без затемнения
+    _image: Optional[pg.Surface]
+    _light: int
+
     def __init__(self, *groups, level, monochrome=True):
         super().__init__(*groups, level.light_sprites)
         self.frame_from_last_light_update = 0
@@ -273,7 +280,7 @@ class LightedSprite(pg.sprite.Sprite):
         self._light = MINIMUM_LIGHT
 
     @property
-    def image(self):
+    def image(self) -> pg.Surface:
         return self._image
 
     @image.setter
@@ -282,7 +289,7 @@ class LightedSprite(pg.sprite.Sprite):
         self.put_light()
 
     @property
-    def light(self):
+    def light(self) -> int:
         return self._light
 
     @light.setter
@@ -292,7 +299,7 @@ class LightedSprite(pg.sprite.Sprite):
         self._light = value
         self.put_light()
 
-    def put_light(self):
+    def put_light(self) -> None:
         self._image = self.real_image.copy()
         dark_image = self._image.copy()
         r = dark_image.get_rect()
@@ -300,20 +307,20 @@ class LightedSprite(pg.sprite.Sprite):
         if self.monochrome:
             dark_image.fill((0, 0, 0, dark))
         else:
-            # сохраняем отношения прозрачности. В частности прозрачное остаётся прозрачным
+            # Сохраняем отношения прозрачности. В частности прозрачное остаётся прозрачным
             for i in range(r.h):
                 for j in range(r.w):
                     dark_image.set_at((j, i), (0, 0, 0, dark_image.get_at((j, i)).a * dark // 255))
         self._image.blit(dark_image, (0, 0))
 
     @property
-    def tracking_points(self):
+    def tracking_points(self) -> List[IntPoint]:
         return [self.rect.topleft,
                 self.rect.topright,
                 self.rect.bottomleft,
                 self.rect.bottomright]
 
-    def update(self, *args):
+    def update(self, *args) -> None:
         if isinstance(self, MoveableSprite):
             self.frame_from_last_light_update += 1
             if self.frame_from_last_light_update >= UPDATE_FRAME:
@@ -328,7 +335,8 @@ class AnimationSprite:
         self.image = self.frames[self.cur_frame]
         self.mask = pg.mask.from_surface(self.image)
 
-    def update(self):
+    def update(self) -> None:
+        """Обновляет текущий кадр"""
         self.cur_frame = (self.cur_frame + 1) % (len(self.frames) * self.update_image_speed)
         self.image = self.frames[self.cur_frame // self.update_image_speed]
         self.mask = pg.mask.from_surface(self.image)
@@ -340,7 +348,7 @@ class MoveableSprite:
         self.real_pos = list(pos)
         self.frame_from_last_light_update = 0
 
-    def move(self, dx: float, dy: float):
+    def move(self, dx: float, dy: float) -> None:
         """Передвигает спрайт на расстояние self.speed по лучу
             задаваемым вектором с координатами {dx, dy}"""
         if not dx and not dy:
@@ -355,7 +363,7 @@ class MoveableSprite:
 
         self.change_cords_and_push_from_walls(dx, dy)
 
-    def change_cords_and_push_from_walls(self, dx: float, dy: float):
+    def change_cords_and_push_from_walls(self, dx: float, dy: float) -> None:
         """Изменяем координаты и выталкиваем персонажа из стен"""
         if dx:
             self.real_pos[0] += dx
@@ -373,6 +381,10 @@ class MoveableSprite:
                 self.rect.y -= sign_y  # выталкивает персонажа из стен
 
     def move_to(self, pos: Point) -> bool:
+        """Передвегаем спрайк к точке, с заданой скоростью.
+        Возращает истунну если растояние до точки меньше скорости.
+        (Спрайт дойдёт до точки если ему не помешают стены)"""
+
         dx, dy = pos[0] - self.rect.x, pos[1] - self.rect.y
         r = sqrt(dx ** 2 + dy ** 2)
         if r == 0:
@@ -402,6 +414,7 @@ class Tile(LightedSprite):
 
 
 class Player(LightedSprite, AnimationSprite, MoveableSprite):
+    inventory: Dict[str, List[int, int]]
     default_rect, frames = cut_sheet(load_image('player16x20.png'), 4, 1)
 
     def __init__(self, pos_x, pos_y, level):
@@ -420,7 +433,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
                                 speed=5)
 
         # Значения - текущее кол-во и вместимость
-        self.inventory: Dict[str, List[int, int]] = {"torch": [3, 3]}
+        self.inventory = {"torch": [3, 3]}
 
         self.level.relight_it(self)
 
@@ -455,7 +468,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
         super().update(*args)
 
     def add_torch(self) -> bool:
-        """Добавляет факел в инвентарь"""
+        """Добавляет факел в инвентарь если есть место."""
         torchs = self.inventory["torch"]
         if torchs[0] < torchs[1]:
             torchs[0] += 1
@@ -463,7 +476,7 @@ class Player(LightedSprite, AnimationSprite, MoveableSprite):
         else:
             return False
 
-    def place_torch(self):
+    def place_torch(self) -> None:
         """Ставит факел на карту из инвентаря"""
         if self.inventory["torch"][0]:
             Torch(find_center(self), self.level)
@@ -606,7 +619,7 @@ class Participle(LightedSprite):
         self.light = light
 
         # у каждой частицы своя скорость — это вектор
-        self.velocity = [random.random() - 1 / 2, random.random() - 1/2]
+        self.velocity = [random.random() - 1 / 2, random.random() - 1 / 2]
         # и свои координаты
         self.rect.topleft = pos
         self.real_pos = list(pos)
@@ -695,13 +708,14 @@ class Border(pg.sprite.Sprite):
 
 
 class Level(pg.Surface):
+    level_num: int
     width: int
     height: int
     rows: int
     cols: int
     player: Optional[Player]
     tiles: List[List[Tile]]
-    light_sources: Set[Tuple[IntPoint, int]]
+    light_sources: Set[LightSource]
 
     tile_width = tile_height = 64
 
@@ -730,7 +744,7 @@ class Level(pg.Surface):
         super().__init__((self.width, self.height))
 
     @staticmethod
-    def load_level(level_num: int):
+    def load_level(level_num: int) -> List[str]:
         filename = os.path.join('levels', f'l{level_num}.txt')
         # читаем уровень, убирая символы перевода строки
         with open(filename, 'r') as mapFile:
@@ -742,7 +756,7 @@ class Level(pg.Surface):
         # дополняем каждую строку пустыми клетками ('.')
         return list(map(lambda x: x.ljust(max_width, '.'), level_map))
 
-    def generate_level(self, level):
+    def generate_level(self, level) -> None:
         self.tiles.clear()
         self.cols = 0
         self.rows = len(level)
@@ -773,12 +787,13 @@ class Level(pg.Surface):
         Border(pg.Rect(0, self.height, self.width, 1), self)  # Нижняя
         Border(pg.Rect(-1, 0, 1, self.height), self)  # Левая
         Border(pg.Rect(self.width, 0, 1, self.height), self)  # Правая
+
         self.player = Player(*player_pos, self)
 
-    def update(self, *args):
+    def update(self, *args) -> None:
         self.all_sprites.update(*args)
 
-    def draw_on(self, screen: pg.Surface, rect: pg.Rect):
+    def draw_on(self, screen: pg.Surface, rect: pg.Rect) -> None:
         """Рисует все свои спрайты на себе, затем блитает на screen часть себя.
         Фокусируется на игроке, но не выходя за границы. (У краёв игрок будет не в центре)"""
         self.fill(pg.Color("black"))
@@ -797,11 +812,14 @@ class Level(pg.Surface):
 
         screen.blit(self, rect, rect.copy().move(x, y))
 
-    def count_light_between(self, pos, light_power, target: LightedSprite):
+    def count_light_between(self, light_source: LightSource, target: LightedSprite) -> None:
+        """Освещает target"""
+        pos, light_power = light_source
+
         ray_step = 5
         light_step = 40
 
-        # просто константы для более бытрого счёта
+        # Константы для более бытрого счёта
         rs_ls = ray_step * light_step
         rs_ls2 = rs_ls ** 2
         sp_c = find_center(target)
@@ -815,28 +833,30 @@ class Level(pg.Surface):
                 target.light += dl
                 break
 
-    def count_light_for_source(self, pos, light_power):
+    def count_light_for_source(self, light_source: LightSource):
         for sprite in self.light_sprites:
-            self.count_light_between(pos, light_power, sprite)
+            self.count_light_between(light_source, sprite)
 
-    def add_light(self, pos, light_power):
-        self.light_sources.add((pos, light_power))
-        self.count_light_for_source(pos, light_power)
+    def add_light(self, light_source: LightSource):
+        self.light_sources.add(light_source)
+        self.count_light_for_source(light_source)
 
-    def remove_light(self, pos, light_power):
-        if (pos, light_power) in self.light_sources:
-            self.light_sources.remove((pos, light_power))
+    def remove_light(self, light_source: LightSource):
+        if light_source in self.light_sources:
+            self.light_sources.remove(light_source)
         else:
-            self.light_sources.add((pos, -light_power))
+            self.light_sources.add((light_source[0], -light_source[1]))
 
-        self.count_light_for_source(pos, -light_power)
+        self.count_light_for_source((light_source[0], -light_source[1]))
 
-    def relight_it(self, sprite: LightedSprite):
+    def relight_it(self, sprite: LightedSprite) -> None:
+        """Переосвещает данный спрайт"""
         sprite.light = MINIMUM_LIGHT
-        for pos, light_power in self.light_sources:
-            self.count_light_between(pos, light_power, sprite)
+        for light_source in self.light_sources:
+            self.count_light_between(light_source, sprite)
 
-    def ray_tracing(self, target: LightedSprite, a, b=None, r=None):
+    def ray_tracing(self, target: LightedSprite, a: Point, b: Optional[Point] = None,
+                    r: Optional[int] = None) -> bool:
         """Проверяет доходит ли луч от a до target."""
         if b is None:
             b = find_center(target)
@@ -871,7 +891,8 @@ class Level(pg.Surface):
             now_cord[1] += dy
         return False
 
-    def cords_to_tile(self, cords):
+    def cords_to_tile(self, cords: Point) -> Optional[Tile]:
+        """Возращает Tile рассположенную в данных координатах"""
         x = int(cords[0] // self.tile_width)
         y = int(cords[1] // self.tile_height)
         if (0 <= y < len(self.tiles)) and (0 <= x < len(self.tiles[y])):
@@ -879,9 +900,9 @@ class Level(pg.Surface):
         else:
             return None
 
-    def next_level(self):
+    def next_level(self) -> None:
         user_data = read_saved_data()
-        user_data['level'] = self.level_num + 1
+        user_data['level'] = str(self.level_num + 1)
         save_data(user_data)
         self.__init__(self.level_num + 1)
 
