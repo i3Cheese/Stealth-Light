@@ -727,6 +727,8 @@ class Level(pg.Surface):
     tile_width = tile_height = 64
 
     def __init__(self, level_num):
+        self.in_game = False
+
         self.level_num = level_num
 
         # группы спрайтов
@@ -750,6 +752,9 @@ class Level(pg.Surface):
 
         super().__init__((self.width, self.height))
 
+        self.in_game = True
+        self.relight_all()
+
     @staticmethod
     def load_level(level_num: int) -> List[str]:
         filename = os.path.join('levels', f'l{level_num}.txt')
@@ -772,20 +777,19 @@ class Level(pg.Surface):
             self.tiles.append([])
             self.cols = max(self.cols, len(level[y]))
             for x in range(len(level[y])):
-                tile = None
-                if level[y][x] == '.':
-                    tile = Tile('empty', False, x, y, self)
-                elif level[y][x] == '#':
+                if level[y][x] == '#':
                     tile = Tile('wall', True, x, y, self)
-                elif level[y][x] == '@':
+                else:
                     tile = Tile('empty', False, x, y, self)
-                    player_pos = x, y
-                elif level[y][x] == '%':
-                    tile = Tile('empty', False, x, y, self)
-                    Enemy(x, y, self)
-                elif level[y][x] == '$':
-                    tile = Tile('empty', False, x, y, self)
-                    Exit(x, y, self)
+                    if level[y][x] == '@':
+                        player_pos = x, y
+                    elif level[y][x] == '%':
+                        Enemy(x, y, self)
+                    elif level[y][x] == '$':
+                        Exit(x, y, self)
+                    elif level[y][x] == '*':
+                        Torch((int(Level.tile_width * (x + .5)), int(Level.tile_height * (y + .5))),
+                              self)
                 self.tiles[-1].append(tile)
 
         self.width, self.height = Level.tile_width * self.cols, Level.tile_height * self.rows
@@ -846,7 +850,8 @@ class Level(pg.Surface):
 
     def add_light(self, light_source: LightSource):
         self.light_sources.add(light_source)
-        self.count_light_for_source(light_source)
+        if running:
+            self.count_light_for_source(light_source)
 
     def remove_light(self, light_source: LightSource):
         if light_source in self.light_sources:
@@ -855,6 +860,11 @@ class Level(pg.Surface):
             self.light_sources.add((light_source[0], -light_source[1]))
 
         self.count_light_for_source((light_source[0], -light_source[1]))
+
+    def relight_all(self) -> None:
+        """Полностью перепросчитывает свет."""
+        for light_source in self.light_sources:
+            self.count_light_for_source(light_source)
 
     def relight_it(self, sprite: LightedSprite) -> None:
         """Переосвещает данный спрайт"""
